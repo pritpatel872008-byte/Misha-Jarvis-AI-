@@ -109,6 +109,29 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
     fun send(text: String) {
         val prompt = text.trim()
         if (prompt.isEmpty() || busy) return
+        val lower = prompt.lowercase(Locale.ROOT)
+        try {
+            when {
+                lower == "open youtube" || lower.startsWith("open youtube") -> { openYouTube(); status = "Opening YouTube."; input = ""; return }
+                lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/"))); status = "Opening live weather."; input = ""; return }
+                lower.startsWith("search ") || lower.startsWith("google ") -> {
+                    val query = prompt.substringAfter(' ').trim()
+                    context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode(query))))
+                    status = "Opening Google search."; input = ""; return
+                }
+                lower.startsWith("call ") || lower.startsWith("dial ") -> {
+                    val number = prompt.substringAfter(' ').trim()
+                    context.startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + android.net.Uri.encode(number))))
+                    status = "Dialer opened. Review the number and place the call yourself."; input = ""; return
+                }
+                lower == "lock my phone" || lower == "lock phone" -> { lockPhone(); status = "Device lock requested. Activate device admin if prompted."; input = ""; return }
+                lower.contains("whatsapp") -> {
+                    val launch = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
+                    if (launch != null) context.startActivity(launch) else context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.whatsapp.com/")))
+                    status = "Opening WhatsApp. Review and send messages yourself."; input = ""; return
+                }
+            }
+        } catch (_: Exception) { status = "That action couldn't be opened on this device."; return }
         input = ""; busy = true; status = "Connecting to Misha AI…"
         askBackend(prompt) { answer ->
             history = (history + Message(prompt = prompt, answer = answer)).takeLast(100)
