@@ -46,7 +46,9 @@ class handler(BaseHTTPRequestHandler):
             if not anthropic_key and not google_key:
                 return respond(self, 503, {"error": "AI provider is not configured. Add ANTHROPIC_API_KEY or GEMINI_API_KEY in Vercel Environment Variables."})
 
-            if anthropic_key:
+            # Prefer Gemini when both keys exist: the observed 502 is an Anthropic
+            # workspace/key authorization rejection, while this app is configured for Gemini.
+            if anthropic_key and not google_key:
                 request_body = {
                     "model": os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-latest"),
                     "max_tokens": 700,
