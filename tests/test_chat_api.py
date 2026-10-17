@@ -68,7 +68,7 @@ class ChatApiTests(unittest.TestCase):
         h.do_POST()
         status, result = h.result()
         self.assertEqual(status, 400)
-        self.assertIn("Malformed JSON", result["error"])
+        self.assertIn("valid JSON", result["error"])
 
     def test_invalid_message_shape_returns_422(self):
         body = json.dumps({"messages": [{"role": "system", "content": "bad"}]}).encode()
