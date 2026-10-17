@@ -51,6 +51,14 @@ class ProviderResponse:
 
 
 class ChatApiTests(unittest.TestCase):
+    def test_root_health_check_returns_200(self):
+        h = FakeHandler(path="/")
+        h.do_GET()
+        status, result = h.result()
+        self.assertEqual(status, 200)
+        self.assertEqual(result["status"], "online")
+        self.assertEqual(result["chat_endpoint"], "POST /api/ai/chat")
+
     def setUp(self):
         for key in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
             os.environ.pop(key, None)
