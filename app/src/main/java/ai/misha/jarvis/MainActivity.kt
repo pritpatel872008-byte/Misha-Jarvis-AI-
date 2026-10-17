@@ -67,7 +67,21 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 val code = conn.responseCode
                 val stream = if (code in 200..299) conn.inputStream else conn.errorStream
                 val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                if (code !in 200..299) "Assistant service returned HTTP $code. Please try again later."
+                if (code !in 200..299) {
+                    val detail = try {
+                        val error = JSONObject(body)
+                        val value = error.opt("detail") ?: error.opt("message") ?: error.opt("error")
+                        when (value) {
+                            is org.json.JSONArray -> (0 until value.length()).joinToString("; ") { i ->
+                                val item = value.optJSONObject(i)
+                                if (item != null) listOf(item.optString("loc").takeIf { it.isNotBlank() && it != "null" }, item.optString("msg").takeIf { it.isNotBlank() && it != "null" }).filterNotNull().joinToString(": ") else value.optString(i)
+                            }
+                            is org.json.JSONObject -> value.toString()
+                            else -> value?.toString()
+                        }
+                    } catch (_: Exception) { null }
+                    "Assistant service HTTP $code" + (detail?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ": ${body.take(300)}")
+                }
                 else parseAnswer(body).ifBlank { "The assistant service returned no readable answer." }
             } catch (_: Exception) { "I couldn't reach the assistant service. Check your internet connection and try again." }
             finally { conn?.disconnect() }
