@@ -21,6 +21,15 @@ def respond(handler, status, payload):
 
 
 class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.split("?", 1)[0] == "/":
+            return respond(self, 200, {
+                "service": "Misha Voice AI API",
+                "status": "online",
+                "chat_endpoint": "POST /api/ai/chat"
+            })
+        return respond(self, 404, {"error": "Not found."})
+
     def do_OPTIONS(self):
         respond(self, 204, {})
 
