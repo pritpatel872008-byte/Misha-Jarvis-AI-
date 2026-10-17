@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         Executors.newSingleThreadExecutor().execute {
             var conn: HttpURLConnection? = null
             val answer = try {
-                conn = (URL("https://misha-ai-backend.onrender.com/api/ai/chat").openConnection() as HttpURLConnection).apply {
+                conn = (URL("https://misha-voice-ai-api.vercel.app/api/ai/chat").openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"; connectTimeout = 12000; readTimeout = 20000
                     setRequestProperty("Content-Type", "application/json"); doOutput = true
                 }
