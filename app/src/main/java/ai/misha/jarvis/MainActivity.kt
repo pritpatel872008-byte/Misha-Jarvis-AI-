@@ -1,0 +1,172 @@
+package ai.misha.jarvis
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.Executors
+
+class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+    private var tts: TextToSpeech? = null
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); tts = TextToSpeech(this, this); setContent { MishaApp(::speak, ::askBackend) } }
+    override fun onInit(status: Int) { if (status == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault() }
+    private fun speak(text: String) { runOnUiThread { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) } }
+    private fun askBackend(prompt: String, done: (String) -> Unit) {
+        Executors.newSingleThreadExecutor().execute {
+            var conn: HttpURLConnection? = null
+            val answer = try {
+                conn = (URL("https://misha-ai-backend.onrender.com/api/ai/chat").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"; connectTimeout = 12000; readTimeout = 20000
+                    setRequestProperty("Content-Type", "application/json"); doOutput = true
+                }
+                conn.outputStream.use { it.write(JSONObject().put("message", prompt).toString().toByteArray()) }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (code !in 200..299) "Assistant service returned HTTP $code. Please try again later."
+                else parseAnswer(body).ifBlank { "The assistant service returned no readable answer." }
+            } catch (_: Exception) { "I couldn't reach the assistant service. Check your internet connection and try again." }
+            finally { conn?.disconnect() }
+            runOnUiThread { done(answer) }
+        }
+    }
+    private fun parseAnswer(body: String): String = try {
+        val j = JSONObject(body)
+        listOf("reply", "response", "message", "output_text", "answer").firstNotNullOfOrNull { key -> j.optString(key).takeIf { it.isNotBlank() && it != "null" } }
+            ?: body.take(500)
+    } catch (_: Exception) { body.take(500) }
+    override fun onDestroy() { tts?.shutdown(); super.onDestroy() }
+}
+
+private val Night = Color(0xFF090A16)
+private val Violet = Color(0xFF9D7BFF)
+private data class Message(val id: String = UUID.randomUUID().toString(), val prompt: String, val answer: String)
+
+@Composable
+private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> Unit) -> Unit) {
+    val context = LocalContext.current
+    var input by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var listening by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("Ready when you are.") }
+    var history by remember { mutableStateOf(listOf<Message>()) }
+    val recognizer = remember { if (SpeechRecognizer.isRecognitionAvailable(context)) SpeechRecognizer.createSpeechRecognizer(context) else null }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured." }, { listening = false; status = it })
+        else status = "Microphone permission is required for voice input."
+    }
+    DisposableEffect(recognizer) { onDispose { recognizer?.destroy() } }
+    fun send(text: String) {
+        val prompt = text.trim()
+        if (prompt.isEmpty() || busy) return
+        input = ""; busy = true; status = "Connecting to Misha AI…"
+        askBackend(prompt) { answer ->
+            history = (history + Message(prompt = prompt, answer = answer)).takeLast(100)
+            busy = false; status = "Response received."; speak(answer)
+        }
+    }
+    MaterialTheme(colorScheme = darkColorScheme(primary = Violet, background = Night, surface = Color(0xFF15162B), onSurface = Color(0xFFF5F1FF))) {
+        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF201544), Night, Night))).padding(horizontal = 20.dp, vertical = 18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(42.dp).background(Brush.linearGradient(listOf(Violet, Color(0xFFDE91D7))), RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) { Text("M", fontWeight = FontWeight.Bold, fontSize = 23.sp, color = Color.White) }
+                    Spacer(Modifier.width(11.dp))
+                    Column { Text("MISHA", fontWeight = FontWeight.ExtraBold, letterSpacing = 3.sp); Text("PERSONAL AI · JARVIS MODE", fontSize = 9.sp, color = Color(0xFFAAA4CF), letterSpacing = 1.sp) }
+                }
+                TextButton(onClick = { history = emptyList(); status = "Conversation cleared from this session." }) { Text("Clear", color = Color(0xFFBDB0F8)) }
+            }
+            Spacer(Modifier.height(28.dp))
+            Text("YOUR ASSISTANT", color = Color(0xFFB7A5FF), letterSpacing = 2.sp, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text("At your command,\nPrit.", fontSize = 32.sp, lineHeight = 37.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+            Text("Think it. Say it. Let's get it done.", color = Color(0xFFAAA8C3), fontSize = 12.sp)
+            Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(174.dp).background(Brush.radialGradient(listOf(Color(0xFFD6C4FF), Violet, Color(0xFF34236E), Night)), CircleShape), contentAlignment = Alignment.Center) {
+                    Button(onClick = {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                            startListening(recognizer, context, { input = it; listening = false; status = "Voice captured." }, { listening = false; status = it }); listening = true; status = "Listening…"
+                        } else permission.launch(Manifest.permission.RECORD_AUDIO)
+                    }, shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D2B85)), modifier = Modifier.size(104.dp)) {
+                        Text(if (listening) "•••" else "M", fontSize = 34.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Text("●  $status", fontSize = 10.sp, color = Color(0xFFB9B0E6), modifier = Modifier.padding(bottom = 14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                listOf("What can you do?", "Lock my phone", "Help me").forEach { action ->
+                    OutlinedButton(onClick = { if (action.contains("Lock")) status = "Phone lock needs a separately configured Android Device Admin flow; no lock was attempted." else send(action) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)) { Text(action, fontSize = 10.sp) }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Ask Misha anything…") }, shape = RoundedCornerShape(16.dp), trailingIcon = { TextButton(enabled = !busy, onClick = { send(input) }) { Text(if (busy) "…" else "Send") } }, maxLines = 3)
+            Spacer(Modifier.height(12.dp))
+            Text("RECENT CONVERSATION", color = Color(0xFF9D91CB), letterSpacing = 1.5.sp, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            if (history.isEmpty()) {
+                Text("No conversations yet. Ask Misha something to begin.", color = Color(0xFF85839F), fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
+            } else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f, fill = false)) {
+                items(history.reversed(), key = { it.id }) { item ->
+                    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF17182D)), modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) { Text("YOU", color = Violet, fontSize = 9.sp, fontWeight = FontWeight.Bold); Text(item.prompt, fontSize = 12.sp); Spacer(Modifier.height(8.dp)); Text("MISHA", color = Color(0xFFDDA8F1), fontSize = 9.sp, fontWeight = FontWeight.Bold); Text(item.answer, fontSize = 12.sp) }
+                    }
+                }
+            }
+            Spacer(Modifier.weight(1f, fill = true))
+            Text("Actions that affect your phone or accounts require permission and confirmation.", fontSize = 9.sp, color = Color(0xFF77758F), lineHeight = 13.sp)
+        }
+    }
+}
+
+private fun startListening(recognizer: SpeechRecognizer?, context: android.content.Context, onResult: (String) -> Unit, onError: (String) -> Unit) {
+    if (recognizer == null) { onError("Speech recognition is unavailable on this device."); return }
+    recognizer.setRecognitionListener(object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {}
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onError(error: Int) { onError("Voice recognition failed ($error). Try typing or speak again.") }
+        override fun onResults(results: Bundle?) {
+            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+            if (text.isNullOrBlank()) onError("No speech was recognized. Please try again.") else onResult(text)
+        }
+        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+    })
+    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+    }
+    try { recognizer.startListening(intent) } catch (_: Exception) { onError("Couldn't start voice recognition. Please retry.") }
+}
