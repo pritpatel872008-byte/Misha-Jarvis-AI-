@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     requestMethod = "POST"; connectTimeout = 12000; readTimeout = 20000
                     setRequestProperty("Content-Type", "application/json"); doOutput = true
                 }
-                conn.outputStream.use { it.write(JSONObject().put("message", prompt).toString().toByteArray()) }
+                conn.outputStream.use { it.write(JSONObject().put("messages", org.json.JSONArray().put(JSONObject().put("role", "user").put("content", prompt))).toString().toByteArray()) }
                 val code = conn.responseCode
                 val stream = if (code in 200..299) conn.inputStream else conn.errorStream
                 val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
@@ -91,7 +91,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private fun parseAnswer(body: String): String = try {
         val j = JSONObject(body)
         listOf("reply", "response", "message", "output_text", "answer").firstNotNullOfOrNull { key -> j.optString(key).takeIf { it.isNotBlank() && it != "null" } }
-            ?: body.take(500)
+            ?: j.optJSONObject("choices")?.optJSONArray("items")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+                ?: j.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+                ?: body.take(500)
     } catch (_: Exception) { body.take(500) }
     override fun onDestroy() { tts?.shutdown(); super.onDestroy() }
 }
