@@ -1,6 +1,8 @@
 package ai.misha.jarvis
 
 import android.Manifest
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -38,7 +40,19 @@ import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); tts = TextToSpeech(this, this); setContent { MishaApp(::speak, ::askBackend) } }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        tts = if (packageManager.getLaunchIntentForPackage("com.google.android.tts") != null) TextToSpeech(this, this, "com.google.android.tts") else TextToSpeech(this, this)
+        setContent { MishaApp(::speak, ::askBackend, ::lockPhone, ::openYouTube) }
+    }
+    private fun lockPhone() {
+        val policy = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = ComponentName(this, MishaDeviceAdminReceiver::class.java)
+        if (policy.isAdminActive(admin)) {
+            try { policy.lockNow() } catch (_: SecurityException) { speak("Phone lock permission is not active.") }
+        } else startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin).putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Allow Misha to lock this phone only when you tap Lock my phone."))
+    }
+    private fun openYouTube() { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/"))) }
     override fun onInit(status: Int) { if (status == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault() }
     private fun speak(text: String) { runOnUiThread { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) } }
     private fun askBackend(prompt: String, done: (String) -> Unit) {
@@ -73,14 +87,20 @@ private val Violet = Color(0xFF9D7BFF)
 private data class Message(val id: String = UUID.randomUUID().toString(), val prompt: String, val answer: String)
 
 @Composable
-private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> Unit) -> Unit) {
+private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> Unit) -> Unit, lockPhone: () -> Unit, openYouTube: () -> Unit) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Ready when you are.") }
-    var history by remember { mutableStateOf(listOf<Message>()) }
-    val recognizer = remember { if (SpeechRecognizer.isRecognitionAvailable(context)) SpeechRecognizer.createSpeechRecognizer(context) else null }
+    var history by remember { mutableStateOf(loadHistory(context)) }
+    val recognizer = remember {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) null else try {
+            val google = ComponentName("com.google.android.googlequicksearchbox", "com.google.android.voicesearch.serviceapi.GoogleRecognitionService")
+            context.packageManager.getPackageInfo("com.google.android.googlequicksearchbox", 0)
+            SpeechRecognizer.createSpeechRecognizer(context, google)
+        } catch (_: Exception) { SpeechRecognizer.createSpeechRecognizer(context) }
+    }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured." }, { listening = false; status = it })
         else status = "Microphone permission is required for voice input."
@@ -92,6 +112,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         input = ""; busy = true; status = "Connecting to Misha AI…"
         askBackend(prompt) { answer ->
             history = (history + Message(prompt = prompt, answer = answer)).takeLast(100)
+            saveHistory(context, history)
             busy = false; status = "Response received."; speak(answer)
         }
     }
@@ -103,7 +124,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     Spacer(Modifier.width(11.dp))
                     Column { Text("MISHA", fontWeight = FontWeight.ExtraBold, letterSpacing = 3.sp); Text("PERSONAL AI · JARVIS MODE", fontSize = 9.sp, color = Color(0xFFAAA4CF), letterSpacing = 1.sp) }
                 }
-                TextButton(onClick = { history = emptyList(); status = "Conversation cleared from this session." }) { Text("Clear", color = Color(0xFFBDB0F8)) }
+                TextButton(onClick = { history = emptyList(); context.getSharedPreferences("misha_history", 0).edit().remove("items").apply(); status = "Saved conversation history cleared." }) { Text("Clear", color = Color(0xFFBDB0F8)) }
             }
             Spacer(Modifier.height(28.dp))
             Text("YOUR ASSISTANT", color = Color(0xFFB7A5FF), letterSpacing = 2.sp, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -124,9 +145,10 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             Text("●  $status", fontSize = 10.sp, color = Color(0xFFB9B0E6), modifier = Modifier.padding(bottom = 14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 listOf("What can you do?", "Lock my phone", "Help me").forEach { action ->
-                    OutlinedButton(onClick = { if (action.contains("Lock")) status = "Phone lock needs a separately configured Android Device Admin flow; no lock was attempted." else send(action) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)) { Text(action, fontSize = 10.sp) }
+                    OutlinedButton(onClick = { when { action.contains("Lock") -> { lockPhone(); status = "Activate device admin if prompted, then tap Lock my phone again." }; else -> send(action) } }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)) { Text(action, fontSize = 10.sp) }
                 }
             }
+            OutlinedButton(onClick = { openYouTube(); status = "Opening YouTube." }, modifier = Modifier.fillMaxWidth()) { Text("Open YouTube") }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Ask Misha anything…") }, shape = RoundedCornerShape(16.dp), trailingIcon = { TextButton(enabled = !busy, onClick = { send(input) }) { Text(if (busy) "…" else "Send") } }, maxLines = 3)
             Spacer(Modifier.height(12.dp))
@@ -170,3 +192,16 @@ private fun startListening(recognizer: SpeechRecognizer?, context: android.conte
     }
     try { recognizer.startListening(intent) } catch (_: Exception) { onError("Couldn't start voice recognition. Please retry.") }
 }
+
+private fun saveHistory(context: android.content.Context, history: List<Message>) {
+    val array = org.json.JSONArray()
+    history.forEach { array.put(JSONObject().put("id", it.id).put("prompt", it.prompt).put("answer", it.answer)) }
+    context.getSharedPreferences("misha_history", 0).edit().putString("items", array.toString()).apply()
+}
+private fun loadHistory(context: android.content.Context): List<Message> = try {
+    val array = org.json.JSONArray(context.getSharedPreferences("misha_history", 0).getString("items", "[]"))
+    (0 until array.length()).map { i ->
+        val item = array.getJSONObject(i)
+        Message(item.optString("id", UUID.randomUUID().toString()), item.optString("prompt"), item.optString("answer"))
+    }.takeLast(100)
+} catch (_: Exception) { emptyList() }
