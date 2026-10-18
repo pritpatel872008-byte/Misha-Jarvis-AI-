@@ -120,6 +120,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
     var listening by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Ready when you are.") }
     var language by remember { mutableStateOf(context.getSharedPreferences("misha_settings", 0).getString("language", "en-US") ?: "en-US") }
+    var bubbleEnabled by remember { mutableStateOf(context.getSharedPreferences("misha_setup", 0).getBoolean("bubble_enabled", false)) }
     var history by remember { mutableStateOf(loadHistory(context)) }
     val recognizer = remember {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) null else try {
@@ -185,14 +186,14 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 }
                 lower == "lock my phone" || lower == "lock phone" -> { lockPhone(); status = "Device lock requested. Activate device admin if prompted."; input = ""; return }
                 lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") -> {
-                    val request = prompt.substringAfter(' ').removePrefix("send ").removePrefix("WhatsApp ").trim()
-                    val parts = request.split(Regex("\\s+"), limit = 3)
-                    if (parts.size < 3 || !parts[1].equals("message", true)) {
-                        status = "Use: WhatsApp CONTACT_NAME message your message text."
+                    val request = if (lower.startsWith("send whatsapp ")) prompt.substringAfter("whatsapp ", ignoreCase = true) else prompt.substringAfter(' ')
+                    val parts = request.split(Regex("\\s+message\\s+"), limit = 2, ignoreCase = true)
+                    if (parts.size < 2 || parts[0].isBlank() || parts[1].isBlank()) {
+                        status = "Use: WhatsApp CONTACT NAME message your message text."
                         input = ""; return
                     }
-                    val contactName = parts[0]
-                    val messageText = parts[2]
+                    val contactName = parts[0].trim()
+                    val messageText = parts[1].trim()
                     val phone = if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) findContactNumber(context, contactName) else null
                     if (phone == null) {
                         status = "I couldn't find that saved contact. Check Contacts permission and use the exact contact name."
@@ -266,21 +267,29 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             OutlinedButton(onClick = { openYouTube(); status = "Opening YouTube." }, modifier = Modifier.fillMaxWidth()) { Text("Open YouTube") }
             OutlinedButton(
                 onClick = {
-                    if (Settings.canDrawOverlays(context)) {
+                    val prefs = context.getSharedPreferences("misha_setup", 0)
+                    if (bubbleEnabled) {
+                        context.stopService(Intent(context, FloatingAssistantService::class.java))
+                        bubbleEnabled = false
+                        prefs.edit().putBoolean("bubble_enabled", false).apply()
+                        status = "Floating assistant disabled."
+                    } else if (Settings.canDrawOverlays(context)) {
                         try {
                             val serviceIntent = Intent(context, FloatingAssistantService::class.java)
                             if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(serviceIntent) else context.startService(serviceIntent)
-                            status = "Floating assistant started. Use the notification's Stop action to dismiss it."
+                            bubbleEnabled = true
+                            prefs.edit().putBoolean("bubble_enabled", true).apply()
+                            status = "Floating assistant enabled. Tap the M bubble to open Misha."
                         } catch (_: Exception) { status = "Couldn't start the floating assistant. Check overlay permission and try again." }
                     } else {
-                        status = "Allow Display over other apps, return to Misha, then tap Floating Assistant again."
+                        status = "Allow Display over other apps, return to Misha, then tap Enable Floating Assistant."
                         try {
                             context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:" + context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         } catch (_: Exception) { status = "Open Android Settings and allow Display over other apps for Misha." }
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("Enable Floating Assistant") }
+            ) { Text(if (bubbleEnabled) "Disable Floating Assistant" else "Enable Floating Assistant") }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Ask Misha anything…") }, shape = RoundedCornerShape(16.dp), trailingIcon = { TextButton(enabled = !busy, onClick = { send(input) }) { Text(if (busy) "…" else "Send") } }, maxLines = 3)
             Spacer(Modifier.height(12.dp))
