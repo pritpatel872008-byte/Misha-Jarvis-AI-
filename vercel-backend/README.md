@@ -1,6 +1,6 @@
 # Misha AI API on Vercel
 
-This folder is a standalone Vercel Python Functions backend. The Android app can call `POST /api/ai/chat`.
+This folder is a standalone Vercel Python Functions backend. The Android app calls `POST /api/ai/chat`.
 
 Request:
 ```json
@@ -14,12 +14,12 @@ Response:
 
 ## Required configuration
 
-In the Vercel project Environment Variables, add **one** server-side secret:
-- `GEMINI_API_KEY` for Google Gemini, or
-- `ANTHROPIC_API_KEY` for Claude.
+In the Vercel project's Production Environment Variables, set:
+- `GEMINI_API_KEY` — your Google Gemini API key.
 
-If your Anthropic key requires a workspace, also set `ANTHROPIC_WORKSPACE_ID` in Vercel. When both Anthropic variables are present, the backend uses Anthropic directly to avoid waiting on Gemini. A key that is not workspace-scoped may require this header; use the workspace ID from your Anthropic Console, or replace it with a workspace-scoped API key.
+Optional:
+- `GEMINI_MODEL` — defaults to `gemini-3.8-flash`. If a configured model returns 404, the backend retries once with the default model.
 
-Optional: `ANTHROPIC_MODEL` or `GEMINI_MODEL`. Never prefix provider keys with `NEXT_PUBLIC_` or `VITE_`, and never put them in the Android app.
+Anthropic/Claude is not used by this backend. The API returns a real configuration/provider error if Gemini is unavailable; it never returns a fake answer.
 
-Deploy this directory as the Vercel project's Root Directory. The API returns a real configuration error if no provider key exists; it never returns a fake answer.
+Never prefix the key with `NEXT_PUBLIC_` or `VITE_`, and never put it in the Android app. Deploy this directory as the Vercel project's Root Directory.
