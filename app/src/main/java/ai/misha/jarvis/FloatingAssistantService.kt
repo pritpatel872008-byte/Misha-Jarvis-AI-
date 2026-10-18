@@ -187,7 +187,10 @@ class FloatingAssistantService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (abs(event.rawX - downX) < dp(8).toFloat() && abs(event.rawY - downY) < dp(8).toFloat()) showPopup()
+                    if (abs(event.rawX - downX) < dp(8).toFloat() && abs(event.rawY - downY) < dp(8).toFloat()) {
+                        if (popup == null) { showPopup(); android.os.Handler(mainLooper).postDelayed({ listenOnce() }, 350) }
+                        else listenOnce()
+                    }
                     true
                 }
                 else -> true
@@ -365,6 +368,14 @@ class FloatingAssistantService : Service() {
                     "Searching for '$query'. I'll try the visible result and Follow/Subscribe control; app layouts vary, so check the account state afterward."
                 }
             } else when {
+                Regex("^(?:please\\s+)?(?:take|capture)\\s+(?:a\\s+)?(?:picture|photo|photograph)$", RegexOption.IGNORE_CASE).matches(clean) -> {
+                    startActivity(Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    "Opening the camera to take a picture. Android keeps the shutter under your control; tap the shutter to capture it."
+                }
+                Regex("^(?:please\\s+)?(?:record|take)\\s+(?:a\\s+)?video$", RegexOption.IGNORE_CASE).matches(clean) -> {
+                    startActivity(Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    "Opening the camera in video mode. Tap Record to start and Stop to finish."
+                }
                 lower in listOf("flashlight on", "turn on flashlight", "switch on flashlight", "torch on", "turn on torch", "flashlight off", "turn off flashlight", "switch off flashlight", "torch off", "turn off torch") -> {
                     val turnOn = lower.endsWith(" on") || lower.startsWith("turn on ") || lower.startsWith("switch on ")
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -445,6 +456,14 @@ class FloatingAssistantService : Service() {
                 lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") || lower.startsWith("open whatsapp and send message ") || lower.startsWith("open whatsapp and message ") || lower.startsWith("open whatsapp and text ") || lower.startsWith("message on whatsapp ") || lower.startsWith("text on whatsapp ") -> {
                     val request = clean.replaceFirst(Regex("^(?:(?:open\\s+)?whatsapp\\s+and\\s+(?:send\\s+)?(?:message|text)|(?:message|text)\\s+on\\s+whatsapp|(?:send\\s+)?whatsapp)\\s*", RegexOption.IGNORE_CASE), "")
                     val recipientAndMessage: Pair<String, String>? = when {
+                        Regex("^(?:message|text)\\s+(.+?)\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
+                            val match = Regex("^(?:message|text)\\s+(.+?)\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
+                            match.groupValues[2].trim() to match.groupValues[1].trim()
+                        }
+                        Regex("^(.+?)\\s+to\\s+(.+?)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
+                            val match = Regex("^(.+?)\\s+to\\s+(.+?)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
+                            match.groupValues[2].trim() to match.groupValues[1].trim()
+                        }
                         Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
                             val match = Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
                             match.groupValues[1].trim() to match.groupValues[2].trim()
@@ -467,9 +486,17 @@ class FloatingAssistantService : Service() {
                         val phone = findContactNumber(recipient)
                         if (phone == null) "I couldn't find a saved contact matching '$recipient'. Check the exact name."
                         else {
-                            val digits = phone.filter(Char::isDigit)
-                            val international = if (digits.startsWith("91") || digits.length > 10) digits else "91$digits"
-                            val uri = android.net.Uri.parse("https://wa.me/$international?text=" + android.net.Uri.encode(messageText))
+                            val digits = phone.filter(Char::isDigit).let { raw ->
+                                if (raw.startsWith("00")) raw.drop(2) else raw
+                            }
+                            val normalizedNumber = when {
+                                digits.length == 10 -> "91$digits"
+                                digits.length == 12 && digits.startsWith("91") -> digits
+                                digits.length in 11..15 && !digits.startsWith("0") -> digits
+                                else -> ""
+                            }
+                            if (normalizedNumber.isBlank()) return "The saved number for '$recipient' is incomplete or invalid ($phone). Fix that contact in your phone's Contacts app, then try again."
+                            val uri = android.net.Uri.parse("https://wa.me/$normalizedNumber?text=" + android.net.Uri.encode(messageText))
                             val intent = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             if (packageManager.getLaunchIntentForPackage("com.whatsapp") != null) intent.setPackage("com.whatsapp")
                             startActivity(intent)
