@@ -215,6 +215,20 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 input = ""; return
             }
             when {
+                lower in listOf("flashlight on", "turn on flashlight", "switch on flashlight", "torch on", "turn on torch", "flashlight off", "turn off flashlight", "switch off flashlight", "torch off", "turn off torch") -> {
+                    val turnOn = lower.endsWith(" on") || lower.startsWith("turn on ") || lower.startsWith("switch on ")
+                    val cameraManager = context.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                    val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                        cameraManager.getCameraCharacteristics(id).get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                    }
+                    if (cameraId == null) status = "This phone does not expose an available camera flashlight."
+                    else {
+                        cameraManager.setTorchMode(cameraId, turnOn)
+                        status = if (turnOn) "Flashlight is on." else "Flashlight is off."
+                        speak(status)
+                    }
+                    input = ""; return
+                }
                 lower == "open youtube" || lower.startsWith("open youtube") -> { openYouTube(); status = "Opening YouTube."; input = ""; return }
                 lower == "open instagram" || lower == "launch instagram" || lower == "start instagram" -> {
                     val launch = context.packageManager.getLaunchIntentForPackage("com.instagram.android")
