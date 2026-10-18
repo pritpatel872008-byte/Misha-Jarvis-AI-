@@ -122,7 +122,11 @@ class handler(BaseHTTPRequestHandler):
                         detail = error.read(1200).decode("utf-8", "replace")
                         # Retry retired configured models once using the provider default.
                         if error.code != 404 or model == DEFAULT_GEMINI_MODEL:
-                            raise
+                            return respond(self, 502, {
+                                "error": "AI provider rejected the request.",
+                                "provider_status": error.code,
+                                "detail": detail,
+                            })
                         try:
                             with urlopen(gemini_request(DEFAULT_GEMINI_MODEL, google_key, safe_messages), timeout=12) as response:
                                 result = json.loads(response.read())
