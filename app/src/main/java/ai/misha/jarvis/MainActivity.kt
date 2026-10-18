@@ -138,6 +138,11 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         else status = "Microphone permission is required for voice input."
     }
     DisposableEffect(recognizer) { onDispose { recognizer?.destroy() } }
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
     fun send(text: String) {
         val prompt = text.trim()
         if (prompt.isEmpty() || busy) return
@@ -196,7 +201,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 Box(Modifier.size(174.dp).background(Brush.radialGradient(listOf(Color(0xFFD6C4FF), Violet, Color(0xFF34236E), Night)), CircleShape), contentAlignment = Alignment.Center) {
                     Button(onClick = {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            startListening(recognizer, context, { input = it; listening = false; status = "Voice captured." }, { listening = false; status = it }); listening = true; status = "Listening…"
+                            startListening(recognizer, context, { recognized -> listening = false; input = recognized; status = "Voice captured."; send(recognized) }, { listening = false; status = it }); listening = true; status = "Listening…"
                         } else permission.launch(Manifest.permission.RECORD_AUDIO)
                     }, shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D2B85)), modifier = Modifier.size(104.dp)) {
                         Text(if (listening) "•••" else "M", fontSize = 34.sp, fontWeight = FontWeight.Bold)
