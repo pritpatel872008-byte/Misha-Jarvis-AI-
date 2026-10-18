@@ -326,7 +326,7 @@ class FloatingAssistantService : Service() {
                     "Opening Instagram."
                 }
                 lower.contains("weather") -> { openSearch("current weather near me", null); "Searching the web for current weather." }
-                lower.startsWith("open ") || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
+                (lower.startsWith("open ") && !lower.startsWith("open whatsapp and send message ")) || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
                     val appName = when {
                         lower.startsWith("open ") -> clean.substringAfter("open ").trim()
                         lower.startsWith("launch ") -> clean.substringAfter("launch ").trim()
