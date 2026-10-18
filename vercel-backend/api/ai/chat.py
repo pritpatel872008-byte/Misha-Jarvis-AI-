@@ -63,8 +63,8 @@ def web_search(query):
         if not url.startswith("http") or url in seen:
             continue
         seen.add(url)
-        results.append({"title": re.sub(r"\\s+", " ", item["title"]).strip(),
-                        "snippet": re.sub(r"\\s+", " ", item.get("snippet", "")).strip(),
+        results.append({"title": re.sub(r"\s+", " ", item["title"]).strip(),
+                        "snippet": re.sub(r"\s+", " ", item.get("snippet", "")).strip(),
                         "url": url})
         if len(results) >= 5:
             break
@@ -73,7 +73,7 @@ def web_search(query):
 
 def is_small_talk(text):
     value = re.sub(r"[^a-z0-9' ]", " ", text.lower())
-    value = re.sub(r"\\s+", " ", value).strip()
+    value = re.sub(r"\s+", " ", value).strip()
     patterns = (
         r"^(hi|hello|hey|heyy+|hii+|good morning|good afternoon|good evening|good night)[ !.]*$",
         r"^(how are you|how r u|what's up|whats up|sup)[ !?.]*$",
@@ -86,15 +86,15 @@ def is_small_talk(text):
 
 def local_conversation(text):
     value = text.lower().strip()
-    if re.search(r"\\b(good morning|good afternoon|good evening|good night)\\b", value):
+    if re.search(r"\b(good morning|good afternoon|good evening|good night)\b", value):
         return "Hey, I'm here with you 💜 How's your day going?"
-    if re.search(r"\\b(how are you|how r u|what's up|whats up)\\b", value):
+    if re.search(r"\b(how are you|how r u|what's up|whats up)\b", value):
         return "I'm here and ready to listen 💜 How are you doing?"
-    if re.search(r"\\b(thank|thanks)\\b", value):
+    if re.search(r"\b(thank|thanks)\b", value):
         return "You're welcome 💜 I'm glad I could help. What else is on your mind?"
-    if re.search(r"\\b(love you|i love you|miss you)\\b", value):
+    if re.search(r"\b(love you|i love you|miss you)\b", value):
         return "Aww, that's sweet of you to say 💜 I'm here to chat and support you."
-    if re.search(r"\\b(bye|goodbye|see you|take care)\\b", value):
+    if re.search(r"\b(bye|goodbye|see you|take care)\b", value):
         return "Take care 💜 I'll be here when you want to talk again."
     return "Hey, I'm here with you 💜 Tell me what's on your mind. I'm listening."
 
@@ -158,7 +158,7 @@ class handler(BaseHTTPRequestHandler):
                 return respond(self, 200, {"reply": local_conversation(latest), "mode": "conversation", "sources": []})
 
             wants_web = bool(re.search(
-                r"\\b(search|look up|latest|current|today|news|research|sources|website|web|price|review|compare|who is|what is|what are|when did|where is|how does|tell me about|information about|find out|explain)\\b",
+                r"\b(search|look up|latest|current|today|news|research|sources|website|web|price|review|compare|who is|what is|what are|when did|where is|how does|tell me about|information about|find out|explain)\b",
                 latest.lower()
             )) or "?" in latest
             if wants_web:
