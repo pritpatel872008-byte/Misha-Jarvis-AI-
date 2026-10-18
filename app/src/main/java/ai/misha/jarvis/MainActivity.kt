@@ -226,7 +226,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     speak(status); input = ""; return
                 }
                 lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") -> {
-                    val request = if (lower.startsWith("send whatsapp ")) prompt.substringAfter("whatsapp ", ignoreCase = true) else prompt.substringAfter(' ')
+                    val request = if (lower.startsWith("send whatsapp ")) prompt.replaceFirst(Regex("^send\\s+whatsapp\\s+", RegexOption.IGNORE_CASE), "") else prompt.replaceFirst(Regex("^whatsapp\\s+", RegexOption.IGNORE_CASE), "")
                     val parts = request.split(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE), limit = 2)
                     if (parts.size < 2 || parts[0].isBlank() || parts[1].isBlank()) {
                         status = "Use: WhatsApp CONTACT NAME message your message text."
