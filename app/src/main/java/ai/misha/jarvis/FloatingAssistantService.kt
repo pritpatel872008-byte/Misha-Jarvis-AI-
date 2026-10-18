@@ -519,14 +519,13 @@ class FloatingAssistantService : Service() {
                                     val screen = MishaAccessibilityService.currentScreen(this)
                                     val expectedPackage = screen.contains("com.whatsapp", ignoreCase = true)
                                     val messageVisible = screen.contains(messageText.take(minOf(24, messageText.length)), ignoreCase = true)
-                                    val recipientVisible = screen.contains(recipient, ignoreCase = true)
-                                    // Only tap Send when WhatsApp, the intended recipient and this message are all visible.
-                                    if (expectedPackage && messageVisible && recipientVisible) {
+                                    // The wa.me URL already targets the resolved saved contact. WhatsApp may display a formatted name,
+                                    // so don't require the raw contact query to appear verbatim on screen.
+                                    if (expectedPackage && messageVisible) {
                                         val tapped = MishaAccessibilityService.perform("tap Send")
                                         if (!tapped) android.os.Handler(mainLooper).postDelayed({
                                             val retryScreen = MishaAccessibilityService.currentScreen(this)
                                             if (retryScreen.contains("com.whatsapp", ignoreCase = true) &&
-                                                retryScreen.contains(recipient, ignoreCase = true) &&
                                                 retryScreen.contains(messageText.take(minOf(24, messageText.length)), ignoreCase = true)) {
                                                 MishaAccessibilityService.perform("tap Send")
                                             }
