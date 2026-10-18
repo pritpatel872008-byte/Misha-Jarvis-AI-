@@ -167,6 +167,26 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode("site:instagram.com $query"))))
                     status = "Searching public Instagram results on the web."; input = ""; return
                 }
+                lower.startsWith("open ") || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
+                    val appName = when {
+                        lower.startsWith("open ") -> prompt.substringAfter(' ').trim()
+                        lower.startsWith("launch ") -> prompt.substringAfter(' ').trim()
+                        else -> prompt.substringAfter("start app ").trim()
+                    }
+                    val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                    val matches = context.packageManager.queryIntentActivities(launcherIntent, 0).filter {
+                        it.loadLabel(context.packageManager).toString().contains(appName, ignoreCase = true)
+                    }
+                    val chosen = matches.firstOrNull()
+                    if (chosen != null && appName.isNotBlank()) {
+                        val launch = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                            .setClassName(chosen.activityInfo.packageName, chosen.activityInfo.name)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(launch)
+                        status = "Opening ${chosen.loadLabel(context.packageManager)}."
+                    } else status = "I couldn't find an installed app matching '$appName'."
+                    input = ""; return
+                }
                 lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/"))); status = "Opening live weather."; input = ""; return }
                 lower.startsWith("search ") || lower.startsWith("google ") -> {
                     val query = prompt.substringAfter(' ').trim()
