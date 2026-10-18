@@ -226,6 +226,23 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode("site:instagram.com $query"))))
                     status = "Searching public Instagram results on the web."; input = ""; return
                 }
+                lower.startsWith("open ") && lower.endsWith(" settings") -> {
+                    val action = when {
+                        lower.contains("wi-fi") || lower.contains("wifi") -> Settings.ACTION_WIFI_SETTINGS
+                        lower.contains("bluetooth") -> Settings.ACTION_BLUETOOTH_SETTINGS
+                        lower.contains("location") || lower.contains("gps") -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+                        lower.contains("display") || lower.contains("brightness") -> Settings.ACTION_DISPLAY_SETTINGS
+                        lower.contains("sound") || lower.contains("volume") -> Settings.ACTION_SOUND_SETTINGS
+                        lower.contains("battery") -> Settings.ACTION_BATTERY_SAVER_SETTINGS
+                        lower.contains("notification") -> Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                        lower.contains("accessibility") -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+                        lower.contains("flashlight") || lower.contains("torch") -> null
+                        else -> Settings.ACTION_SETTINGS
+                    }
+                    if (action == null) status = if (MishaAccessibilityService.perform("quick settings")) "Opened Quick Settings. Use the Flashlight tile." else "Enable Misha Assistant Controls in Accessibility settings first."
+                    else { context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); status = "Opening the requested Android settings." }
+                    input = ""; return
+                }
                 (lower.startsWith("open ") && !lower.startsWith("open whatsapp and send message ")) || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
                     val appName = when {
                         lower.startsWith("open ") -> prompt.substringAfter(' ').trim()
@@ -280,7 +297,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     status = if (MishaAccessibilityService.perform("notifications")) "Opened notifications." else "Enable Misha Assistant Controls in Accessibility Settings first."
                     input = ""; return
                 }
-                lower in listOf("open quick settings", "show quick settings") -> {
+                lower in listOf("open quick settings", "show quick settings", "open flashlight settings", "open torch settings") -> {
                     status = if (MishaAccessibilityService.perform("quick settings")) "Opened Quick Settings." else "Enable Misha Assistant Controls in Accessibility Settings first."
                     input = ""; return
                 }
