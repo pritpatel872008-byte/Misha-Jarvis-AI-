@@ -18,20 +18,11 @@ class MishaAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val packageName = event.packageName?.toString().orEmpty()
-        val visible = StringBuilder()
-        val root = rootInActiveWindow
-        if (root != null) {
-            try { collectVisibleText(root, visible, 0) } catch (_: Exception) { }
-            finally { root.recycle() }
-        }
-        if (visible.isEmpty()) event.text?.forEach { value ->
-            val item = value.toString().trim()
-            if (item.isNotBlank()) visible.append(item).append(' ')
-        }
-        if (packageName.isNotBlank() || visible.isNotBlank()) {
+        // Store only the foreground package and timestamp. Screen text is read on demand
+        // after an explicit user request and is never persisted to preferences.
+        if (packageName.isNotBlank()) {
             getSharedPreferences("misha_screen_context", MODE_PRIVATE).edit()
                 .putString("package", packageName)
-                .putString("text", visible.toString().trim().take(3000))
                 .putLong("updated_at", System.currentTimeMillis())
                 .apply()
         }
@@ -63,28 +54,33 @@ class MishaAccessibilityService : AccessibilityService() {
 
         fun perform(command: String): Boolean {
             val service = instance?.get() ?: return false
-            return when (command.lowercase()) {
+            val normalized = command.lowercase()
+            return when (normalized) {
                 "back" -> service.performGlobalAction(GLOBAL_ACTION_BACK)
                 "home" -> service.performGlobalAction(GLOBAL_ACTION_HOME)
                 "notifications" -> service.performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
                 "quick settings" -> service.performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
-                else -> {
-                    val target = command.removePrefix("tap ").trim()
-                    if (target.isBlank()) false else service.clickVisibleText(target)
-                }
+                else -> if (normalized.startsWith("tap ")) {
+                    val target = command.substringAfter(' ').trim()
+                    target.isNotBlank() && service.clickVisibleText(target)
+                } else false
             }
         }
 
         fun currentScreen(context: android.content.Context): String {
-            val prefs = context.getSharedPreferences("misha_screen_context", MODE_PRIVATE)
-            val packageName = prefs.getString("package", "").orEmpty()
-            val text = prefs.getString("text", "").orEmpty()
-            val age = System.currentTimeMillis() - prefs.getLong("updated_at", 0L)
-            if (age > 15_000L || (packageName.isBlank() && text.isBlank())) {
-                return "Screen context is unavailable or stale. Enable Misha Assistant Controls in Android Accessibility settings and open the app screen again."
-            }
-            return "Current app: $packageName\nVisible text: ${text.ifBlank { "(no text exposed by this app)" }}"
+            val service = instance?.get()
+            if (service == null) return "Enable Misha Assistant Controls in Android Accessibility settings first."
+            return service.readVisibleScreen()
         }
+    }
+
+    private fun readVisibleScreen(): String {
+        val root = rootInActiveWindow ?: return "The current app does not expose screen content to accessibility."
+        val visible = StringBuilder()
+        try { collectVisibleText(root, visible, 0) } catch (_: Exception) { }
+        finally { root.recycle() }
+        val packageName = getSharedPreferences("misha_screen_context", MODE_PRIVATE).getString("package", "unknown")
+        return "Current app: $packageName\nVisible text: ${visible.toString().trim().take(3000).ifBlank { "(no readable text exposed)" }}"
     }
 
     private fun clickVisibleText(target: String): Boolean {
