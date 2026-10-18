@@ -228,7 +228,9 @@ class FloatingAssistantService : Service() {
                     requestMethod = "POST"; connectTimeout = 12000; readTimeout = 20000
                     setRequestProperty("Content-Type", "application/json"); doOutput = true
                 }
-                connection.outputStream.use { it.write(JSONObject().put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", clean))).toString().toByteArray(Charsets.UTF_8)) }
+                val languageTag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
+                val languagePrompt = if (languageTag == "ja-JP") "Reply in Japanese. User request: $clean" else "Reply in English. User request: $clean"
+                connection.outputStream.use { it.write(JSONObject().put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", languagePrompt))).toString().toByteArray(Charsets.UTF_8)) }
                 val code = connection.responseCode
                 val stream = if (code in 200..299) connection.inputStream else connection.errorStream
                 val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
