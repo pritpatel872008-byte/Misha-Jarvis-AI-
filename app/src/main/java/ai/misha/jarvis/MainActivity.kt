@@ -55,7 +55,16 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
     private fun openYouTube() { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/"))) }
     override fun onInit(status: Int) { if (status == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault() }
-    private fun speak(text: String) { runOnUiThread { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) } }
+    private fun speak(text: String) {
+        runOnUiThread {
+            val languageTag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US") ?: "en-US"
+            val locale = if (languageTag == "ja-JP") Locale.JAPANESE else Locale.US
+            val engine = tts ?: return@runOnUiThread
+            val result = engine.setLanguage(locale)
+            if (result >= TextToSpeech.LANG_AVAILABLE) engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+            else engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+        }
+    }
     private fun askBackend(prompt: String, done: (String) -> Unit) {
         Executors.newSingleThreadExecutor().execute {
             var conn: HttpURLConnection? = null
@@ -110,6 +119,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
     var busy by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Ready when you are.") }
+    var language by remember { mutableStateOf(context.getSharedPreferences("misha_settings", 0).getString("language", "en-US") ?: "en-US") }
     var history by remember { mutableStateOf(loadHistory(context)) }
     val recognizer = remember {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) null else try {
@@ -119,7 +129,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         } catch (_: Exception) { SpeechRecognizer.createSpeechRecognizer(context) }
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured. Tap the mic again to submit this first post-permission command." }, { listening = false; status = it })
+        if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured. Tap the mic again to submit this first post-permission command." }, { listening = false; status = it }, language)
         else status = "Microphone permission is required for voice input. Enable it in Android Settings."
     }
     val firstLaunchPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -175,7 +185,8 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             }
         } catch (_: Exception) { status = "That action couldn't be opened on this device."; return }
         input = ""; busy = true; status = "Connecting to Misha AI…"
-        askBackend(prompt) { answer ->
+        val languageInstruction = if (language == "ja-JP") "Reply in Japanese. User request: " else "Reply in English. User request: "
+        askBackend(languageInstruction + prompt) { answer ->
             history = (history + Message(prompt = prompt, answer = answer)).takeLast(100)
             saveHistory(context, history)
             busy = false; status = "Response received."; speak(answer)
@@ -191,7 +202,18 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 }
                 TextButton(onClick = { history = emptyList(); context.getSharedPreferences("misha_history", 0).edit().remove("items").apply(); status = "Saved conversation history cleared." }) { Text("Clear", color = Color(0xFFBDB0F8)) }
             }
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                FilterChip(selected = language == "en-US", onClick = {
+                    language = "en-US"; context.getSharedPreferences("misha_settings", 0).edit().putString("language", language).apply()
+                    status = "English selected."
+                }, label = { Text("English") })
+                FilterChip(selected = language == "ja-JP", onClick = {
+                    language = "ja-JP"; context.getSharedPreferences("misha_settings", 0).edit().putString("language", language).apply()
+                    status = "日本語を選択しました。"
+                }, label = { Text("日本語") })
+            }
+            Spacer(Modifier.height(12.dp))
             Text("YOUR ASSISTANT", color = Color(0xFFB7A5FF), letterSpacing = 2.sp, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text("At your command,\nPrit.", fontSize = 32.sp, lineHeight = 37.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
@@ -200,7 +222,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 Box(Modifier.size(174.dp).background(Brush.radialGradient(listOf(Color(0xFFD6C4FF), Violet, Color(0xFF34236E), Night)), CircleShape), contentAlignment = Alignment.Center) {
                     Button(onClick = {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            startListening(recognizer, context, { listening = false; send(it) }, { listening = false; status = it }); listening = true; status = "Listening…"
+                            startListening(recognizer, context, { listening = false; send(it) }, { listening = false; status = it }, language); listening = true; status = "Listening…"
                         } else permission.launch(Manifest.permission.RECORD_AUDIO)
                     }, shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D2B85)), modifier = Modifier.size(104.dp)) {
                         Text(if (listening) "•••" else "M", fontSize = 34.sp, fontWeight = FontWeight.Bold)
@@ -251,7 +273,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
     }
 }
 
-private fun startListening(recognizer: SpeechRecognizer?, context: android.content.Context, onResult: (String) -> Unit, onError: (String) -> Unit) {
+private fun startListening(recognizer: SpeechRecognizer?, context: android.content.Context, onResult: (String) -> Unit, onError: (String) -> Unit, languageTag: String = "en-US") {
     if (recognizer == null) { onError("Speech recognition is unavailable on this device."); return }
     recognizer.setRecognitionListener(object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {}
@@ -269,7 +291,7 @@ private fun startListening(recognizer: SpeechRecognizer?, context: android.conte
     })
     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
     }
     try { recognizer.startListening(intent) } catch (_: Exception) { onError("Couldn't start voice recognition. Please retry.") }
