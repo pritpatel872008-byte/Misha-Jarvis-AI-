@@ -146,8 +146,8 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
     }
     LaunchedEffect(Unit) {
         val prefs = context.getSharedPreferences("misha_setup", 0)
-        if (!prefs.getBoolean("permission_setup_requested", false)) {
-            prefs.edit().putBoolean("permission_setup_requested", true).apply()
+        if (prefs.getInt("permission_setup_version", 0) < 2) {
+            prefs.edit().putInt("permission_setup_version", 2).apply()
             showPermissionSetup = true
         }
     }
