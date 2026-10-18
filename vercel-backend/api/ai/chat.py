@@ -53,6 +53,7 @@ def anthropic_request(api_key, messages):
             "content-type": "application/json",
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
+            **({"anthropic-workspace-id": os.environ["ANTHROPIC_WORKSPACE_ID"]} if os.environ.get("ANTHROPIC_WORKSPACE_ID") else {}),
         },
         method="POST",
     )
@@ -103,7 +104,7 @@ class handler(BaseHTTPRequestHandler):
             if not anthropic_key and not google_key:
                 return respond(self, 503, {"error": "AI provider is not configured. Add ANTHROPIC_API_KEY or GEMINI_API_KEY in Vercel Environment Variables."})
 
-            if anthropic_key and not google_key:
+            if anthropic_key and (not google_key or os.environ.get("ANTHROPIC_WORKSPACE_ID")):
                 try:
                     answer = anthropic_answer(anthropic_key, safe_messages, timeout=12)
                 except HTTPError as error:
