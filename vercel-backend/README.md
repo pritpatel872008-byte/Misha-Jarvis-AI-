@@ -15,8 +15,10 @@ Response:
 ## Required configuration
 
 In the Vercel project Environment Variables, add **one** server-side secret:
-- `ANTHROPIC_API_KEY` for Claude (preferred), or
-- `GEMINI_API_KEY` for Google Gemini.
+- `GEMINI_API_KEY` for Google Gemini, or
+- `ANTHROPIC_API_KEY` for Claude.
+
+If your Anthropic key requires a workspace, also set `ANTHROPIC_WORKSPACE_ID` in Vercel. When both Anthropic variables are present, the backend uses Anthropic directly to avoid waiting on Gemini. A key that is not workspace-scoped may require this header; use the workspace ID from your Anthropic Console, or replace it with a workspace-scoped API key.
 
 Optional: `ANTHROPIC_MODEL` or `GEMINI_MODEL`. Never prefix provider keys with `NEXT_PUBLIC_` or `VITE_`, and never put them in the Android app.
 
