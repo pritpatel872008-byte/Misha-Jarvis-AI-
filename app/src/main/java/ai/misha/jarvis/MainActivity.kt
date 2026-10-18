@@ -119,8 +119,23 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         } catch (_: Exception) { SpeechRecognizer.createSpeechRecognizer(context) }
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured." }, { listening = false; status = it })
-        else status = "Microphone permission is required for voice input."
+        if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured. Tap the mic again to submit this first post-permission command." }, { listening = false; status = it })
+        else status = "Microphone permission is required for voice input. Enable it in Android Settings."
+    }
+    val firstLaunchPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        status = if (results[Manifest.permission.RECORD_AUDIO] == true) "Setup complete. Spoken commands are submitted automatically." else "Microphone permission is off. Enable it in Android Settings to use voice."
+        if (!Settings.canDrawOverlays(context)) status += " Enable the floating bubble below when ready."
+    }
+    LaunchedEffect(Unit) {
+        val prefs = context.getSharedPreferences("misha_setup", 0)
+        if (!prefs.getBoolean("permission_setup_requested", false)) {
+            prefs.edit().putBoolean("permission_setup_requested", true).apply()
+            val missing = buildList {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
+                if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (missing.isNotEmpty()) firstLaunchPermissions.launch(missing.toTypedArray())
+        }
     }
     DisposableEffect(recognizer) { onDispose { recognizer?.destroy() } }
     fun send(text: String) {
@@ -130,6 +145,16 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         try {
             when {
                 lower == "open youtube" || lower.startsWith("open youtube") -> { openYouTube(); status = "Opening YouTube."; input = ""; return }
+                lower == "open instagram" || lower == "launch instagram" || lower == "start instagram" -> {
+                    val launch = context.packageManager.getLaunchIntentForPackage("com.instagram.android")
+                    if (launch != null) context.startActivity(launch) else context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.instagram.com/")))
+                    status = "Opening Instagram."; input = ""; return
+                }
+                lower.startsWith("search instagram ") || lower.startsWith("find on instagram ") -> {
+                    val query = prompt.substringAfter(' ').substringAfter(' ').trim()
+                    context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode("site:instagram.com $query"))))
+                    status = "Searching public Instagram results on the web."; input = ""; return
+                }
                 lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/"))); status = "Opening live weather."; input = ""; return }
                 lower.startsWith("search ") || lower.startsWith("google ") -> {
                     val query = prompt.substringAfter(' ').trim()
@@ -175,7 +200,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 Box(Modifier.size(174.dp).background(Brush.radialGradient(listOf(Color(0xFFD6C4FF), Violet, Color(0xFF34236E), Night)), CircleShape), contentAlignment = Alignment.Center) {
                     Button(onClick = {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            startListening(recognizer, context, { input = it; listening = false; status = "Voice captured." }, { listening = false; status = it }); listening = true; status = "Listening…"
+                            startListening(recognizer, context, { listening = false; send(it) }, { listening = false; status = it }); listening = true; status = "Listening…"
                         } else permission.launch(Manifest.permission.RECORD_AUDIO)
                     }, shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D2B85)), modifier = Modifier.size(104.dp)) {
                         Text(if (listening) "•••" else "M", fontSize = 34.sp, fontWeight = FontWeight.Bold)
@@ -244,7 +269,7 @@ private fun startListening(recognizer: SpeechRecognizer?, context: android.conte
     })
     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
     }
     try { recognizer.startListening(intent) } catch (_: Exception) { onError("Couldn't start voice recognition. Please retry.") }
