@@ -66,7 +66,6 @@ class FloatingAssistantService : Service() {
     private var sendButton: Button? = null
     private var micButton: Button? = null
     private var busy = false
-    @Volatile private var flashlightEnabled = false
     private val conversationHistory = mutableListOf<Pair<String, String>>()
     private val executor = Executors.newSingleThreadExecutor()
 
@@ -375,7 +374,6 @@ class FloatingAssistantService : Service() {
                     if (cameraId == null) "This phone does not expose an available camera flashlight."
                     else {
                         cameraManager.setTorchMode(cameraId, turnOn)
-                        flashlightEnabled = turnOn
                         if (turnOn) "Flashlight is on." else "Flashlight is off."
                     }
                 }
