@@ -125,6 +125,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
     var busy by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Ready when you are.") }
+    var runVoiceCommand by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf(loadHistory(context)) }
     val recognizer = remember {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) null else try {
@@ -134,7 +135,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         } catch (_: Exception) { SpeechRecognizer.createSpeechRecognizer(context) }
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured." }, { listening = false; status = it })
+        if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured."; runVoiceCommand = true }, { listening = false; status = it })
         else status = "Microphone permission is required for voice input."
     }
     DisposableEffect(recognizer) { onDispose { recognizer?.destroy() } }
@@ -180,6 +181,12 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             history = (history + Message(prompt = prompt, answer = answer)).takeLast(100)
             saveHistory(context, history)
             busy = false; status = "Response received."; speak(answer)
+        }
+    }
+    LaunchedEffect(runVoiceCommand) {
+        if (runVoiceCommand) {
+            runVoiceCommand = false
+            send(input)
         }
     }
     MaterialTheme(colorScheme = darkColorScheme(primary = Violet, background = Night, surface = Color(0xFF15162B), onSurface = Color(0xFFF5F1FF))) {
