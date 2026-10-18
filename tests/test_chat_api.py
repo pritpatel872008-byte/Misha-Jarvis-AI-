@@ -138,6 +138,8 @@ class ChatApiTests(unittest.TestCase):
         status, result = h.result()
         self.assertEqual(status, 502)
         self.assertEqual(result["provider_status"], 400)
+        self.assertNotIn("API key invalid", json.dumps(result))
+        self.assertNotIn("gemini-test-key", json.dumps(result))
 
     @patch.object(api, "urlopen")
     def test_gemini_timeout_returns_502_without_calling_anthropic(self, mock_urlopen):
@@ -150,6 +152,7 @@ class ChatApiTests(unittest.TestCase):
         status, result = h.result()
         self.assertEqual(status, 502)
         self.assertIn("Gemini timed out", result["error"])
+        self.assertNotIn("gemini-test-key", json.dumps(result))
         self.assertEqual(mock_urlopen.call_count, 1)
 
 
