@@ -345,18 +345,17 @@ class FloatingAssistantService : Service() {
                     val request = if (openAndSend) clean.replaceFirst(Regex("^open\\s+whatsapp\\s+and\\s+send\\s+message\\s*", RegexOption.IGNORE_CASE), "")
                         else clean.replaceFirst(Regex("^(?:send\\s+)?whatsapp\\s+", RegexOption.IGNORE_CASE), "")
                     val recipientAndMessage: Pair<String, String>? = when {
-                        Regex("^to\\s+.+?\\s+message\\s+.+$", RegexOption.IGNORE_CASE).matches(request) -> {
-                            val recipient = request.replaceFirst(Regex("^to\\s+", RegexOption.IGNORE_CASE), "").substringBefore(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE)).trim()
-                            val body = request.substringAfter(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE)).trim()
-                            recipient to body
+                        Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
+                            val match = Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
+                            match.groupValues[1].trim() to match.groupValues[2].trim()
                         }
-                        Regex("^.+\\s+to\\s+.+$", RegexOption.IGNORE_CASE).matches(request) -> {
-                            val splitAt = request.lastIndexOf(" to ", ignoreCase = true)
-                            request.substring(splitAt + 4).trim() to request.substring(0, splitAt).trim()
+                        Regex("^(.+)\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
+                            val match = Regex("^(.+)\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
+                            match.groupValues[2].trim() to match.groupValues[1].trim()
                         }
-                        Regex("^.+?\\s+message\\s+.+$", RegexOption.IGNORE_CASE).matches(request) -> {
-                            val splitAt = request.indexOf(" message ", ignoreCase = true)
-                            request.substring(0, splitAt).trim() to request.substring(splitAt + 9).trim()
+                        Regex("^(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
+                            val match = Regex("^(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
+                            match.groupValues[1].trim() to match.groupValues[2].trim()
                         }
                         else -> null
                     }
