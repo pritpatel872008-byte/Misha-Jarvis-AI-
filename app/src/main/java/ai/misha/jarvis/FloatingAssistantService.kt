@@ -328,7 +328,7 @@ class FloatingAssistantService : Service() {
                     if (match == null || appName.isBlank()) "I couldn't find an installed app matching '$appName'."
                     else {
                         startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setClassName(match.activityInfo.packageName, match.activityInfo.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        "Opening \${match.loadLabel(packageManager)}."
+                        "Opening ${match.loadLabel(packageManager)}."
                     }
                 }
                 lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") || lower.startsWith("open whatsapp and send message ") -> {
@@ -373,29 +373,62 @@ class FloatingAssistantService : Service() {
 
     private fun openAppSearch(appName: String, query: String): Boolean {
         val name = appName.trim().lowercase(Locale.ROOT)
+        if (name.isBlank()) return false
         val encoded = android.net.Uri.encode(query)
-        val target = when {
-            name.contains("youtube") -> "https://www.youtube.com/results?search_query=$encoded"
-            name.contains("instagram") -> "https://www.instagram.com/explore/search/keyword/?q=$encoded"
-            else -> "https://www.google.com/search?q=$encoded"
-        }
         val packageName = when {
             name.contains("youtube") -> "com.google.android.youtube"
             name.contains("instagram") -> "com.instagram.android"
             name.contains("chrome") -> "com.android.chrome"
             else -> null
         }
-        val intent = if (query.isBlank()) {
-            packageName?.let { packageManager.getLaunchIntentForPackage(it) }
+        if (query.isBlank()) {
+            val launch = packageName?.let { packageManager.getLaunchIntentForPackage(it) }
+                ?: findLauncherIntentByLabel(appName)
                 ?: packageManager.getLaunchIntentForPackage("com.android.chrome")
                 ?: Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/"))
-        } else {
-            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(target)).apply {
-                if (packageName != null && packageManager.getLaunchIntentForPackage(packageName) != null) setPackage(packageName)
-            }
-        }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(intent)
+            startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return true
+        }
+        val target = when {
+            name.contains("youtube") -> "https://www.youtube.com/results?search_query=$encoded"
+            name.contains("instagram") -> "https://www.instagram.com/explore/search/keyword/?q=$encoded"
+            name.contains("chrome") -> "https://www.google.com/search?q=$encoded"
+            else -> null
+        }
+        if (target != null) {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (packageName != null && packageManager.getLaunchIntentForPackage(packageName) != null) intent.setPackage(packageName)
+            startActivity(intent)
+            return true
+        }
+
+        // For apps without a public search deep link, launch the real installed app and
+        // use user-enabled Accessibility to find its search control and enter the query.
+        val launch = findLauncherIntentByLabel(appName) ?: return false
+        startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        if (MishaAccessibilityService.isEnabled()) {
+            android.os.Handler(mainLooper).postDelayed({
+                val foundSearch = MishaAccessibilityService.perform("tap Search") ||
+                    MishaAccessibilityService.perform("tap Search here") ||
+                    MishaAccessibilityService.perform("tap Search")
+                if (foundSearch) {
+                    android.os.Handler(mainLooper).postDelayed({
+                        MishaAccessibilityService.perform("type $query")
+                        MishaAccessibilityService.perform("enter")
+                    }, 500)
+                }
+            }, 1400)
+        }
         return true
+    }
+
+    private fun findLauncherIntentByLabel(appName: String): Intent? {
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val match = packageManager.queryIntentActivities(launcher, 0).firstOrNull {
+            it.loadLabel(packageManager).toString().contains(appName, ignoreCase = true)
+        } ?: return null
+        return Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            .setClassName(match.activityInfo.packageName, match.activityInfo.name)
     }
 
     private fun openSearch(query: String, packageName: String?) {
