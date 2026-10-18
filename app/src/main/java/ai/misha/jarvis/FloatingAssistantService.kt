@@ -313,6 +313,30 @@ class FloatingAssistantService : Service() {
                         "Opening ${match.loadLabel(packageManager)}."
                     }
                 }
+                lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") -> {
+                    val request = if (lower.startsWith("send whatsapp ")) prompt.replaceFirst(Regex("^send\\s+whatsapp\\s+", RegexOption.IGNORE_CASE), "")
+                        else prompt.replaceFirst(Regex("^whatsapp\\s+", RegexOption.IGNORE_CASE), "")
+                    val parts = request.split(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE), limit = 2)
+                    if (parts.size < 2 || parts[0].isBlank() || parts[1].isBlank()) {
+                        "Use: WhatsApp CONTACT NAME message your message text."
+                    } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+                        "Allow Contacts permission in Misha first, then retry this message."
+                    } else {
+                        val contactName = parts[0].trim()
+                        val messageText = parts[1].trim()
+                        val phone = findContactNumber(contactName)
+                        if (phone == null) "I couldn't find a saved contact matching '$contactName'. Check the exact name."
+                        else {
+                            val digits = phone.filter(Char::isDigit)
+                            val international = if (digits.startsWith("91") || digits.length > 10) digits else "91$digits"
+                            val uri = android.net.Uri.parse("https://wa.me/$international?text=" + android.net.Uri.encode(messageText))
+                            val intent = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            if (packageManager.getLaunchIntentForPackage("com.whatsapp") != null) intent.setPackage("com.whatsapp")
+                            startActivity(intent)
+                            "Opened the WhatsApp chat with your message ready. Review it and tap Send."
+                        }
+                    }
+                }
                 lower.startsWith("call ") || lower.startsWith("dial ") -> {
                     val target = prompt.substringAfter(' ').trim()
                     val number = if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED)
