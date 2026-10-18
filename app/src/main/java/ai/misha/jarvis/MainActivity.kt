@@ -243,7 +243,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     else { context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); status = "Opening the requested Android settings." }
                     input = ""; return
                 }
-                (lower.startsWith("open ") && !lower.startsWith("open whatsapp and send message ")) || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
+                (lower.startsWith("open ") && !lower.startsWith("open whatsapp and send message ") && !lower.startsWith("open whatsapp and message ") && !lower.startsWith("open whatsapp and text ")) || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
                     val appName = when {
                         lower.startsWith("open ") -> prompt.substringAfter(' ').trim()
                         lower.startsWith("launch ") -> prompt.substringAfter(' ').trim()
@@ -281,8 +281,15 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                         status = if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) "Allow Contacts permission in Android Settings, then say call followed by the saved contact name." else "No saved contact or phone number matched '$target'."
                         input = ""; return
                     }
-                    context.startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + android.net.Uri.encode(number))))
-                    status = "Found the number. Review it in the dialer and tap Call to place the call."; input = ""; return
+                    val tel = android.net.Uri.parse("tel:" + android.net.Uri.encode(number))
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                        context.startActivity(Intent(Intent.ACTION_CALL, tel))
+                        status = "Calling $target now."
+                    } else {
+                        context.startActivity(Intent(Intent.ACTION_DIAL, tel))
+                        status = "Phone permission is not granted, so I opened the dialer. Grant Phone permission in Android Settings to place calls by voice."
+                    }
+                    input = ""; return
                 }
                 lower == "lock my phone" || lower == "lock phone" -> { lockPhone(); status = "Device lock requested. Activate device admin if prompted."; input = ""; return }
                 lower in listOf("go back", "press back", "back") -> {
@@ -309,10 +316,8 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     status = MishaAccessibilityService.currentScreen(context)
                     speak(status); input = ""; return
                 }
-                lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") || lower.startsWith("open whatsapp and send message ") -> {
-                    val openAndSend = lower.startsWith("open whatsapp and send message ")
-                    val request = if (openAndSend) prompt.replaceFirst(Regex("^open\\s+whatsapp\\s+and\\s+send\\s+message\\s*", RegexOption.IGNORE_CASE), "")
-                        else prompt.replaceFirst(Regex("^(?:send\\s+)?whatsapp\\s+", RegexOption.IGNORE_CASE), "")
+                lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") || lower.startsWith("open whatsapp and send message ") || lower.startsWith("open whatsapp and message ") || lower.startsWith("open whatsapp and text ") || lower.startsWith("message on whatsapp ") || lower.startsWith("text on whatsapp ") -> {
+                    val request = prompt.replaceFirst(Regex("^(?:(?:open\\s+)?whatsapp\\s+and\\s+(?:send\\s+)?(?:message|text)|(?:message|text)\\s+on\\s+whatsapp|(?:send\\s+)?whatsapp)\\s*", RegexOption.IGNORE_CASE), "")
                     val parsed: Pair<String, String>? = when {
                         Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
                             val m = Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
@@ -350,11 +355,12 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     if (MishaAccessibilityService.isEnabled()) {
                         android.os.Handler(context.mainLooper).postDelayed({
                             val screen = MishaAccessibilityService.currentScreen(context)
-                            if (screen.contains(contactName, ignoreCase = true) && screen.contains(messageText.take(24), ignoreCase = true)) {
-                                MishaAccessibilityService.perform("tap Send")
+                            if (screen.contains("com.whatsapp", ignoreCase = true) && screen.contains(messageText.take(minOf(24, messageText.length)), ignoreCase = true)) {
+                                val tapped = MishaAccessibilityService.perform("tap Send")
+                                if (!tapped) android.os.Handler(context.mainLooper).postDelayed({ MishaAccessibilityService.perform("tap Send") }, 1000)
                             }
-                        }, 1800)
-                        status = "Opened WhatsApp for $contactName. I'll attempt Send only if the visible screen matches the recipient and message; check WhatsApp to confirm."
+                        }, 3000)
+                        status = "Opened WhatsApp for $contactName and will try to press Send after the chat loads. Check the conversation to confirm delivery."
                     } else status = "Opened WhatsApp for $contactName with the message ready. Enable Misha Assistant Controls in Accessibility settings for the optional send attempt."
                     input = ""; return
                 }
@@ -419,6 +425,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
                         if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.CALL_PHONE)
                     }
                     if (missing.isNotEmpty()) firstLaunchPermissions.launch(missing.toTypedArray()) else status = "Runtime permissions are already granted."
                 }) { Text("Grant runtime permissions") }
