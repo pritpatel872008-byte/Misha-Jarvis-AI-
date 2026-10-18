@@ -60,10 +60,15 @@ class MishaAccessibilityService : AccessibilityService() {
                 "home" -> service.performGlobalAction(GLOBAL_ACTION_HOME)
                 "notifications" -> service.performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
                 "quick settings" -> service.performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
-                else -> if (normalized.startsWith("tap ")) {
-                    val target = command.substringAfter(' ').trim()
-                    target.isNotBlank() && service.clickVisibleText(target)
-                } else false
+                "enter", "search", "submit" -> service.pressEnterOnFocusedField()
+                else -> when {
+                    normalized.startsWith("tap ") -> {
+                        val target = command.substringAfter(' ').trim()
+                        target.isNotBlank() && service.clickVisibleText(target)
+                    }
+                    normalized.startsWith("type ") -> service.typeIntoFocusedField(command.substringAfter(' ').trim())
+                    else -> false
+                }
             }
         }
 
@@ -81,6 +86,30 @@ class MishaAccessibilityService : AccessibilityService() {
         finally { root.recycle() }
         val packageName = getSharedPreferences("misha_screen_context", MODE_PRIVATE).getString("package", "unknown")
         return "Current app: $packageName\nVisible text: ${visible.toString().trim().take(3000).ifBlank { "(no readable text exposed)" }}"
+    }
+
+    private fun typeIntoFocusedField(text: String): Boolean {
+        if (text.isEmpty()) return false
+        val root = rootInActiveWindow ?: return false
+        var focused: AccessibilityNodeInfo? = null
+        return try {
+            focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            val args = android.os.Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            }
+            focused?.isEditable == true && focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        } catch (_: Exception) { false }
+        finally { focused?.recycle(); root.recycle() }
+    }
+
+    private fun pressEnterOnFocusedField(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        var focused: AccessibilityNodeInfo? = null
+        return try {
+            focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            focused?.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER) == true
+        } catch (_: Exception) { false }
+        finally { focused?.recycle(); root.recycle() }
     }
 
     private fun clickVisibleText(target: String): Boolean {
