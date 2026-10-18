@@ -74,7 +74,7 @@ class ChatApiTests(unittest.TestCase):
         self.assertIn("Gemini is not configured", result["error"])
 
     def test_malformed_json_returns_400(self):
-        h = FakeHandler(b"{", {"Content-Length": "1"})
+        h = FakeHandler(b"{x", {"Content-Length": "2"})
         h.do_POST()
         status, result = h.result()
         self.assertEqual(status, 400)
