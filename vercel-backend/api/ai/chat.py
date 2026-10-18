@@ -58,7 +58,17 @@ class handler(BaseHTTPRequestHandler):
             if not anthropic_key and not google_key:
                 return respond(self, 503, {"error": "AI provider is not configured. Add ANTHROPIC_API_KEY or GEMINI_API_KEY in Vercel Environment Variables."})
 
-            if anthropic_key:
+            latest_user_text = " ".join(m["content"] for m in safe_messages if m["role"] == "user")[-3000:].lower()
+            educational_request = any(term in latest_user_text for term in (
+                "fiber optic", "optical fibre", "optical fiber", "explain", "what is", "what are",
+                "how does", "how do", "information about", "tell me about", "technical", "definition",
+                "science", "physics", "engineering", "technology", "how it works", "educational",
+                "光ファイバー", "光ファイバ", "とは", "仕組み", "詳しく", "教えて", "科学", "技術"
+            ))
+
+            # Use Gemini for educational/technical knowledge when configured. Claude remains
+            # the fallback for open-ended conversation and for deployments without Gemini.
+            if anthropic_key and not (google_key and educational_request):
                 request_body = {
                     "model": os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-latest"),
                     "max_tokens": 700,
