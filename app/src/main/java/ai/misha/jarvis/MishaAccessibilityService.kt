@@ -106,8 +106,13 @@ class MishaAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow ?: return false
         var focused: AccessibilityNodeInfo? = null
         return try {
-            focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            focused?.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER) == true
+            val searchButtons = root.findAccessibilityNodeInfosByText("Search")
+            val button = searchButtons?.firstOrNull { it.isVisibleToUser && it.isClickable }
+            if (button != null) button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            else {
+                focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                focused?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+            }
         } catch (_: Exception) { false }
         finally { focused?.recycle(); root.recycle() }
     }
