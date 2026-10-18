@@ -119,31 +119,43 @@ class MishaAccessibilityService : AccessibilityService() {
 
     private fun clickVisibleText(target: String): Boolean {
         val root = rootInActiveWindow ?: return false
-        var nodes: List<AccessibilityNodeInfo> = emptyList()
+        val wanted = target.trim()
+        if (wanted.isBlank()) { root.recycle(); return false }
+        fun findLabel(node: AccessibilityNodeInfo, depth: Int): AccessibilityNodeInfo? {
+            if (depth > 20 || !node.isVisibleToUser) return null
+            val text = node.text?.toString()?.trim().orEmpty()
+            val description = node.contentDescription?.toString()?.trim().orEmpty()
+            val matches = text.equals(wanted, ignoreCase = true) ||
+                description.equals(wanted, ignoreCase = true) ||
+                text.contains(wanted, ignoreCase = true) ||
+                description.contains(wanted, ignoreCase = true)
+            if (matches) return AccessibilityNodeInfo.obtain(node)
+            for (index in 0 until node.childCount) {
+                val child = node.getChild(index) ?: continue
+                val found = try { findLabel(child, depth + 1) } finally { child.recycle() }
+                if (found != null) return found
+            }
+            return null
+        }
+        var matched: AccessibilityNodeInfo? = null
         return try {
-            nodes = root.findAccessibilityNodeInfosByText(target).orEmpty()
-            val exact = nodes.firstOrNull {
-                it.isVisibleToUser && (
-                    it.text?.toString()?.trim()?.equals(target, ignoreCase = true) == true ||
-                    it.contentDescription?.toString()?.trim()?.equals(target, ignoreCase = true) == true
-                )
-            }
-            val candidate = exact ?: nodes.firstOrNull { it.isVisibleToUser }
-            var clickable: AccessibilityNodeInfo? = candidate
+            matched = findLabel(root, 0)
+            var current = matched?.let { AccessibilityNodeInfo.obtain(it) }
             var depth = 0
-            while (clickable != null && !clickable.isClickable && depth++ < 8) {
-                val parent = clickable.parent
-                if (clickable !== candidate) clickable.recycle()
-                clickable = parent
+            while (current != null && depth++ < 8) {
+                if (current.isVisibleToUser && current.isClickable &&
+                    current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    current.recycle()
+                    return true
+                }
+                val parent = current.parent
+                current.recycle()
+                current = parent
             }
-            val success = clickable?.takeIf { it.isVisibleToUser && it.isClickable }
-                ?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-            if (clickable != null && clickable !== candidate) clickable.recycle()
-            success
+            false
         } catch (_: Exception) { false }
         finally {
-            nodes.forEach { try { it.recycle() } catch (_: Exception) {} }
+            try { matched?.recycle() } catch (_: Exception) {}
             root.recycle()
         }
-    }
-}
+    }}
