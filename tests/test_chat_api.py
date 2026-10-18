@@ -5,6 +5,7 @@ import os
 import pathlib
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -60,7 +61,7 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(result["chat_endpoint"], "POST /api/ai/chat")
 
     def setUp(self):
-        for key in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        for key in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_MODEL"):
             os.environ.pop(key, None)
 
     def test_missing_provider_key_returns_clear_503(self):
@@ -99,13 +100,36 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["reply"], "Namaste!")
         self.assertIn("generativelanguage.googleapis.com", mock_urlopen.call_args.args[0].full_url)
+        self.assertIn(api.DEFAULT_GEMINI_MODEL, mock_urlopen.call_args.args[0].full_url)
+
+    @patch.object(api, "urlopen")
+    def test_retired_gemini_model_retries_current_default(self, mock_urlopen):
+        os.environ["GEMINI_API_KEY"] = "gemini-test-key"
+        os.environ["GEMINI_MODEL"] = "gemini-2.5-flash"
+        retired = HTTPError(
+            "https://generativelanguage.googleapis.com/", 404, "not found", {},
+            io.BytesIO(b'{"error":{"message":"model unavailable"}}')
+        )
+        mock_urlopen.side_effect = [
+            retired,
+            ProviderResponse({"candidates": [{"content": {"parts": [{"text": "Working reply"}]}}]}),
+        ]
+        body = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
+        h = FakeHandler(body, {"Content-Length": str(len(body))})
+        h.do_POST()
+        status, result = h.result()
+        self.assertEqual(status, 200)
+        self.assertEqual(result["reply"], "Working reply")
+        self.assertEqual(mock_urlopen.call_count, 2)
+        self.assertIn("models/gemini-2.5-flash:", mock_urlopen.call_args_list[0].args[0].full_url)
+        self.assertIn("models/" + api.DEFAULT_GEMINI_MODEL + ":", mock_urlopen.call_args_list[1].args[0].full_url)
 
     @patch.object(api, "urlopen")
     def test_provider_http_error_returns_502_without_crashing(self, mock_urlopen):
         os.environ["GEMINI_API_KEY"] = "gemini-test-key"
-        from urllib.error import HTTPError
         mock_urlopen.side_effect = HTTPError(
-            "https://generativelanguage.googleapis.com/", 400, "bad key", {}, io.BytesIO(b'{"error":{"message":"API key invalid"}}')
+            "https://generativelanguage.googleapis.com/", 400, "bad key", {},
+            io.BytesIO(b'{"error":{"message":"API key invalid"}}')
         )
         body = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
         h = FakeHandler(body, {"Content-Length": str(len(body))})
