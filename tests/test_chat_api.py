@@ -61,7 +61,7 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(result["chat_endpoint"], "POST /api/ai/chat")
 
     def setUp(self):
-        for key in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_MODEL"):
+        for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_WORKSPACE_ID", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_MODEL"):
             os.environ.pop(key, None)
 
     def test_missing_provider_key_returns_clear_503(self):
@@ -156,6 +156,25 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(mock_urlopen.call_count, 2)
         self.assertIn("generativelanguage.googleapis.com", mock_urlopen.call_args_list[0].args[0].full_url)
         self.assertIn("api.anthropic.com", mock_urlopen.call_args_list[1].args[0].full_url)
+
+
+    @patch.object(api, "urlopen")
+    def test_workspace_scoped_anthropic_key_is_used_directly(self, mock_urlopen):
+        os.environ["GEMINI_API_KEY"] = "gemini-test-key"
+        os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
+        os.environ["ANTHROPIC_WORKSPACE_ID"] = "workspace-test-id"
+        mock_urlopen.return_value = ProviderResponse({
+            "content": [{"type": "text", "text": "Anthropic reply"}]
+        })
+        body = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
+        h = FakeHandler(body, {"Content-Length": str(len(body))})
+        h.do_POST()
+        status, result = h.result()
+        self.assertEqual(status, 200)
+        self.assertEqual(result["reply"], "Anthropic reply")
+        request = mock_urlopen.call_args.args[0]
+        self.assertIn("api.anthropic.com", request.full_url)
+        self.assertEqual(request.get_header("Anthropic-workspace-id"), "workspace-test-id")
 
 
 if __name__ == "__main__":
