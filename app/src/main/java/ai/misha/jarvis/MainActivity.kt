@@ -54,15 +54,19 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         } else startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin).putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Allow Misha to lock this phone only when you tap Lock my phone."))
     }
     private fun openYouTube() { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/"))) }
-    override fun onInit(status: Int) { if (status == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault() }
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US") ?: "en-US"
+            MishaVoiceProfile.configure(tts ?: return, if (tag == "ja-JP") Locale.JAPANESE else Locale.US)
+        }
+    }
     private fun speak(text: String) {
         runOnUiThread {
             val languageTag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US") ?: "en-US"
             val locale = if (languageTag == "ja-JP") Locale.JAPANESE else Locale.US
             val engine = tts ?: return@runOnUiThread
-            val result = engine.setLanguage(locale)
-            if (result >= TextToSpeech.LANG_AVAILABLE) engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
-            else engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+            MishaVoiceProfile.configure(engine, locale)
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
         }
     }
     private fun askBackend(prompt: String, done: (String) -> Unit) {
