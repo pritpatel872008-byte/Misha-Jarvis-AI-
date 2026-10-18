@@ -24,6 +24,7 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import re
           import urllib.error
           import urllib.request
 
@@ -49,12 +50,16 @@ jobs:
           except json.JSONDecodeError:
               raise SystemExit("Production AI endpoint returned non-JSON output.")
           if status != 200 or not isinstance(result.get("reply"), str) or not result["reply"].strip():
-              # Print only non-secret diagnostic fields returned by this API.
-              print(json.dumps({
+              diagnostic = {
                   key: result.get(key)
-                  for key in ("error", "provider_status")
+                  for key in ("error", "provider_status", "detail")
                   if key in result
-              }))
+              }
+              detail = str(diagnostic.get("detail", ""))[:1000]
+              # Defensive redaction: never print a possible API key from provider errors.
+              detail = re.sub(r"(?i)(key=)[^&\\s]+", r"\\1[REDACTED]", detail)
+              diagnostic["detail"] = detail
+              print(json.dumps(diagnostic))
               raise SystemExit("Production AI smoke test failed.")
           print("Production AI smoke test passed with a non-empty reply.")
           PY
