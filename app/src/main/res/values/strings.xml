@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="misha_accessibility_description">Allows Misha to read visible screen text and perform explicit navigation or text-target actions only after you enable this service in Android Settings.</string>
+</resources>
