@@ -16,6 +16,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -271,7 +273,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             onDismissRequest = { showPermissionSetup = false },
             title = { Text("Misha phone access setup") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Review each permission before enabling it.")
                     Text("• Microphone — voice commands; recording starts only after you tap the mic.")
                     Text("• Contacts — find the right saved person for calling or WhatsApp.")
