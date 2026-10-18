@@ -576,10 +576,10 @@ class FloatingAssistantService : Service() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
+        hidePopup()
         stopWakeWordDetector()
         try { wakeWordDetector?.release() } catch (_: Exception) {}
         wakeWordDetector = null
-        hidePopup()
         try { bubble?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         bubble = null
         try { recognizer?.destroy() } catch (_: Exception) {}
