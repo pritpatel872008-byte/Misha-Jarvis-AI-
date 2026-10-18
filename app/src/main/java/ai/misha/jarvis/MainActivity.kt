@@ -350,8 +350,8 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         } catch (_: Exception) { status = "That action couldn't be opened on this device."; return }
         input = ""; busy = true; status = "Connecting to Misha AI…"
         val languageInstruction = if (language == "ja-JP") "Reply in Japanese. " else "Reply in English. "
-        val recentContext = history.takeLast(8).joinToString("\\n") { "Previous user: ${it.prompt}\\nPrevious Misha: ${it.answer}" }
-        val contextualPrompt = languageInstruction + (if (recentContext.isBlank()) "" else "Recent conversation context:\\n$recentContext\\n") + "Current user request: $prompt"
+        val recentContext = history.takeLast(8).joinToString("\n") { "Previous user: ${it.prompt}\nPrevious Misha: ${it.answer}" }
+        val contextualPrompt = languageInstruction + (if (recentContext.isBlank()) "" else "Recent conversation context:\n$recentContext\n") + "Current user request: $prompt"
         askBackend(contextualPrompt) { answer ->
             history = (history + Message(prompt = prompt, answer = answer)).takeLast(100)
             saveHistory(context, history)
