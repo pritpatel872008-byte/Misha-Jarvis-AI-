@@ -142,6 +142,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             prefs.edit().putBoolean("permission_setup_requested", true).apply()
             val missing = buildList {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
                 if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
             }
             if (missing.isNotEmpty()) firstLaunchPermissions.launch(missing.toTypedArray())
@@ -172,15 +173,42 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     status = "Opening Google search."; input = ""; return
                 }
                 lower.startsWith("call ") || lower.startsWith("dial ") -> {
-                    val number = prompt.substringAfter(' ').trim()
+                    val target = prompt.substringAfter(' ').trim()
+                    val contactNumber = if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) findContactNumber(context, target) else null
+                    val number = contactNumber ?: target.takeIf { it.any(Char::isDigit) }
+                    if (number == null) {
+                        status = if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) "Allow Contacts permission in Android Settings, then say call followed by the saved contact name." else "No saved contact or phone number matched '$target'."
+                        input = ""; return
+                    }
                     context.startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + android.net.Uri.encode(number))))
-                    status = "Dialer opened. Review the number and place the call yourself."; input = ""; return
+                    status = "Found the number. Review it in the dialer and tap Call to place the call."; input = ""; return
                 }
                 lower == "lock my phone" || lower == "lock phone" -> { lockPhone(); status = "Device lock requested. Activate device admin if prompted."; input = ""; return }
+                lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") -> {
+                    val request = prompt.substringAfter(' ').removePrefix("send ").removePrefix("WhatsApp ").trim()
+                    val parts = request.split(Regex("\\s+"), limit = 3)
+                    if (parts.size < 3 || !parts[1].equals("message", true)) {
+                        status = "Use: WhatsApp CONTACT_NAME message your message text."
+                        input = ""; return
+                    }
+                    val contactName = parts[0]
+                    val messageText = parts[2]
+                    val phone = if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) findContactNumber(context, contactName) else null
+                    if (phone == null) {
+                        status = "I couldn't find that saved contact. Check Contacts permission and use the exact contact name."
+                        input = ""; return
+                    }
+                    val digits = phone.filter(Char::isDigit)
+                    val international = if (digits.startsWith("91") || digits.length > 10) digits else "91$digits"
+                    val uri = android.net.Uri.parse("https://wa.me/$international?text=" + android.net.Uri.encode(messageText))
+                    context.startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage("com.whatsapp"))
+                    status = "WhatsApp chat opened with your message ready. Review it and tap Send."
+                    input = ""; return
+                }
                 lower.contains("whatsapp") -> {
                     val launch = context.packageManager.getLaunchIntentForPackage("com.whatsapp")
                     if (launch != null) context.startActivity(launch) else context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.whatsapp.com/")))
-                    status = "Opening WhatsApp. Review and send messages yourself."; input = ""; return
+                    status = "Opening WhatsApp."; input = ""; return
                 }
             }
         } catch (_: Exception) { status = "That action couldn't be opened on this device."; return }
@@ -271,6 +299,19 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             Text("Actions that affect your phone or accounts require permission and confirmation.", fontSize = 9.sp, color = Color(0xFF77758F), lineHeight = 13.sp)
         }
     }
+}
+
+private fun findContactNumber(context: android.content.Context, name: String): String? {
+    if (name.isBlank()) return null
+    return try {
+        context.contentResolver.query(
+            android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
+            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?",
+            arrayOf("%$name%"),
+            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE NOCASE ASC"
+        )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0)?.takeIf { it.isNotBlank() } else null }
+    } catch (_: SecurityException) { null } catch (_: Exception) { null }
 }
 
 private fun startListening(recognizer: SpeechRecognizer?, context: android.content.Context, onResult: (String) -> Unit, onError: (String) -> Unit, languageTag: String = "en-US") {
