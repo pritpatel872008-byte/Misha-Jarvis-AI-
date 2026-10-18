@@ -245,8 +245,8 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             Spacer(Modifier.height(12.dp))
             Text("YOUR ASSISTANT", color = Color(0xFFB7A5FF), letterSpacing = 2.sp, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Text("At your command,\nPrit.", fontSize = 32.sp, lineHeight = 37.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-            Text("Think it. Say it. Let's get it done.", color = Color(0xFFAAA8C3), fontSize = 12.sp)
+            Text("What can I help you with?", fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+            Text("Speak or type in English or Japanese. Voice commands submit automatically.", color = Color(0xFFAAA8C3), fontSize = 12.sp)
             Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
                 Box(Modifier.size(174.dp).background(Brush.radialGradient(listOf(Color(0xFFD6C4FF), Violet, Color(0xFF34236E), Night)), CircleShape), contentAlignment = Alignment.Center) {
                     Button(onClick = {
