@@ -301,6 +301,7 @@ class FloatingAssistantService : Service() {
                 lower in listOf("open settings", "phone settings", "open phone settings") -> {
                     startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Opening Android Settings."
                 }
+                lower.startsWith("open ") && lower.endsWith(" settings") -> openSystemSettings(lower)
                 lower.startsWith("tap ") -> if (MishaAccessibilityService.perform(clean)) "Tapped a visible item matching that text." else "No visible matching control was clicked. Check Accessibility permission and the exact text."
                 lower in listOf("what's on my screen", "what is on my screen", "read my screen") -> MishaAccessibilityService.currentScreen(this)
                 lower.startsWith("open ") && lower.contains(" search ") -> {
@@ -340,13 +341,30 @@ class FloatingAssistantService : Service() {
                     }
                 }
                 lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") || lower.startsWith("open whatsapp and send message ") -> {
-                    val request = clean.replaceFirst(Regex("^(?:open\\s+)?(?:send\\s+)?whatsapp(?:\\s+and\\s+send\\s+message)?\\s+", RegexOption.IGNORE_CASE), "")
-                    val parts = request.split(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE), limit = 2)
-                    if (parts.size < 2 || parts[0].isBlank() || parts[1].isBlank()) "Use: open WhatsApp and send message to CONTACT NAME message YOUR MESSAGE."
+                    val openAndSend = lower.startsWith("open whatsapp and send message")
+                    val request = if (openAndSend) clean.replaceFirst(Regex("^open\\s+whatsapp\\s+and\\s+send\\s+message\\s*", RegexOption.IGNORE_CASE), "")
+                        else clean.replaceFirst(Regex("^(?:send\\s+)?whatsapp\\s+", RegexOption.IGNORE_CASE), "")
+                    val recipientAndMessage: Pair<String, String>? = when {
+                        Regex("^to\\s+.+?\\s+message\\s+.+$", RegexOption.IGNORE_CASE).matches(request) -> {
+                            val recipient = request.replaceFirst(Regex("^to\\s+", RegexOption.IGNORE_CASE), "").substringBefore(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE)).trim()
+                            val body = request.substringAfter(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE)).trim()
+                            recipient to body
+                        }
+                        Regex("^.+\\s+to\\s+.+$", RegexOption.IGNORE_CASE).matches(request) -> {
+                            val splitAt = request.lastIndexOf(" to ", ignoreCase = true)
+                            request.substring(splitAt + 4).trim() to request.substring(0, splitAt).trim()
+                        }
+                        Regex("^.+?\\s+message\\s+.+$", RegexOption.IGNORE_CASE).matches(request) -> {
+                            val splitAt = request.indexOf(" message ", ignoreCase = true)
+                            request.substring(0, splitAt).trim() to request.substring(splitAt + 9).trim()
+                        }
+                        else -> null
+                    }
+                    if (recipientAndMessage == null || recipientAndMessage.first.isBlank() || recipientAndMessage.second.isBlank()) "Say: WhatsApp to CONTACT NAME message TEXT, or open WhatsApp and send message TEXT to CONTACT NAME."
                     else if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) "Allow Contacts permission in Misha first, then retry this message."
                     else {
-                        val recipient = parts[0].trim().replaceFirst(Regex("^to\\s+", RegexOption.IGNORE_CASE), "").trim()
-                        val messageText = parts[1].trim()
+                        val recipient = recipientAndMessage.first.trim()
+                        val messageText = recipientAndMessage.second.trim()
                         val phone = findContactNumber(recipient)
                         if (phone == null) "I couldn't find a saved contact matching '$recipient'. Check the exact name."
                         else {
@@ -377,6 +395,27 @@ class FloatingAssistantService : Service() {
                 else -> null
             }
         } catch (_: Exception) { "That phone action couldn't be opened. Check the required permission and try again." }
+    }
+
+    private fun openSystemSettings(command: String): String {
+        val action = when {
+            command.contains("wi-fi") || command.contains("wifi") -> Settings.ACTION_WIFI_SETTINGS
+            command.contains("bluetooth") -> Settings.ACTION_BLUETOOTH_SETTINGS
+            command.contains("location") || command.contains("gps") -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+            command.contains("display") || command.contains("brightness") -> Settings.ACTION_DISPLAY_SETTINGS
+            command.contains("sound") || command.contains("volume") -> Settings.ACTION_SOUND_SETTINGS
+            command.contains("battery") -> Settings.ACTION_BATTERY_SAVER_SETTINGS
+            command.contains("notification") -> Settings.ACTION_APP_NOTIFICATION_SETTINGS
+            command.contains("accessibility") -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+            command.contains("apps") || command.contains("applications") -> Settings.ACTION_APPLICATION_SETTINGS
+            command.contains("flashlight") || command.contains("torch") -> {
+                if (MishaAccessibilityService.perform("quick settings")) return "Opened Quick Settings. Use the Flashlight tile."
+                return "Enable Misha Assistant Controls in Accessibility settings first."
+            }
+            else -> Settings.ACTION_SETTINGS
+        }
+        startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        return "Opening the requested Android settings."
     }
 
     private fun openAppSearch(appName: String, query: String): Boolean {
