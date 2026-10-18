@@ -185,6 +185,30 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     status = "Found the number. Review it in the dialer and tap Call to place the call."; input = ""; return
                 }
                 lower == "lock my phone" || lower == "lock phone" -> { lockPhone(); status = "Device lock requested. Activate device admin if prompted."; input = ""; return }
+                lower in listOf("go back", "press back", "back") -> {
+                    status = if (MishaAccessibilityService.perform("back")) "Went back." else "Enable Misha Assistant Controls in Accessibility Settings first."
+                    input = ""; return
+                }
+                lower in listOf("go home", "home screen", "go to home screen") -> {
+                    status = if (MishaAccessibilityService.perform("home")) "Returned to Home." else "Enable Misha Assistant Controls in Accessibility Settings first."
+                    input = ""; return
+                }
+                lower in listOf("show notifications", "open notifications") -> {
+                    status = if (MishaAccessibilityService.perform("notifications")) "Opened notifications." else "Enable Misha Assistant Controls in Accessibility Settings first."
+                    input = ""; return
+                }
+                lower in listOf("open quick settings", "show quick settings") -> {
+                    status = if (MishaAccessibilityService.perform("quick settings")) "Opened Quick Settings." else "Enable Misha Assistant Controls in Accessibility Settings first."
+                    input = ""; return
+                }
+                lower.startsWith("tap ") -> {
+                    status = if (MishaAccessibilityService.perform(prompt)) "Tapped visible item matching the requested text." else "No visible matching control was clicked. Enable Accessibility and check the exact on-screen text."
+                    input = ""; return
+                }
+                lower in listOf("what's on my screen", "what is on my screen", "read my screen") -> {
+                    status = MishaAccessibilityService.currentScreen(context)
+                    speak(status); input = ""; return
+                }
                 lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") -> {
                     val request = if (lower.startsWith("send whatsapp ")) prompt.substringAfter("whatsapp ", ignoreCase = true) else prompt.substringAfter(' ')
                     val parts = request.split(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE), limit = 2)
@@ -242,6 +266,35 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     status = "日本語を選択しました。"
                 }, label = { Text("日本語") })
             }
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF17182D)), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("PHONE ACCESS & PERMISSIONS", color = Color(0xFFD6C4FF), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text("Microphone: voice commands • Contacts: call/message lookup • Notifications: background status • Display over other apps: floating chat • Accessibility: visible screen context and explicit navigation • Device admin: lock phone only.", color = Color(0xFFB8B4D1), fontSize = 11.sp, lineHeight = 16.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = {
+                            val missing = buildList {
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
+                                if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            if (missing.isNotEmpty()) firstLaunchPermissions.launch(missing.toTypedArray()) else status = "Runtime permissions already granted."
+                        }, modifier = Modifier.weight(1f)) { Text("Runtime access", fontSize = 10.sp) }
+                        OutlinedButton(onClick = {
+                            try { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:" + context.packageName))) }
+                            catch (_: Exception) { status = "Open Android Settings and enable Display over other apps for Misha." }
+                        }, modifier = Modifier.weight(1f)) { Text("Floating overlay", fontSize = 10.sp) }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = {
+                            try { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                            catch (_: Exception) { status = "Open Android Settings → Accessibility to enable Misha Assistant Controls." }
+                        }, modifier = Modifier.weight(1f)) { Text("Accessibility", fontSize = 10.sp) }
+                        OutlinedButton(onClick = { lockPhone() }, modifier = Modifier.weight(1f)) { Text("Device admin / lock", fontSize = 10.sp) }
+                    }
+                    Text("Accessibility and overlay must be enabled separately in Android Settings. Allow only access you understand and want.", color = Color(0xFF8F8BAA), fontSize = 10.sp)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
             Spacer(Modifier.height(12.dp))
             Text("YOUR ASSISTANT", color = Color(0xFFB7A5FF), letterSpacing = 2.sp, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
