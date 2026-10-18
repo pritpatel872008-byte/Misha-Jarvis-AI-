@@ -261,6 +261,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             busy = false; status = "Response received."; speak(answer)
         }
     }
+    MaterialTheme(colorScheme = darkColorScheme(primary = Violet, background = Night, surface = Color(0xFF15162B), onSurface = Color(0xFFF5F1FF))) {
     if (showPermissionSetup) {
         AlertDialog(
             onDismissRequest = { showPermissionSetup = false },
@@ -293,7 +294,6 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             }
         )
     }
-    MaterialTheme(colorScheme = darkColorScheme(primary = Violet, background = Night, surface = Color(0xFF15162B), onSurface = Color(0xFFF5F1FF))) {
         Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF201544), Night, Night))).padding(horizontal = 20.dp, vertical = 18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
