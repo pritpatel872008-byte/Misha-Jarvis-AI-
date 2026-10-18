@@ -39,6 +39,34 @@ def gemini_request(model, api_key, messages):
         method="POST",
     )
 
+def anthropic_request(api_key, messages):
+    request_body = {
+        "model": os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-latest"),
+        "max_tokens": 700,
+        "system": SYSTEM_PROMPT,
+        "messages": messages,
+    }
+    return Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(request_body).encode(),
+        headers={
+            "content-type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+
+
+def anthropic_answer(api_key, messages, timeout=12):
+    with urlopen(anthropic_request(api_key, messages), timeout=timeout) as response:
+        result = json.loads(response.read())
+    return "".join(
+        block.get("text", "")
+        for block in result.get("content", [])
+        if block.get("type") == "text"
+    ).strip()
+
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -76,43 +104,59 @@ class handler(BaseHTTPRequestHandler):
                 return respond(self, 503, {"error": "AI provider is not configured. Add ANTHROPIC_API_KEY or GEMINI_API_KEY in Vercel Environment Variables."})
 
             if anthropic_key and not google_key:
-                request_body = {
-                    "model": os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-latest"),
-                    "max_tokens": 700,
-                    "system": SYSTEM_PROMPT,
-                    "messages": safe_messages,
-                }
-                req = Request("https://api.anthropic.com/v1/messages", data=json.dumps(request_body).encode(), headers={
-                    "content-type": "application/json", "x-api-key": anthropic_key, "anthropic-version": "2023-06-01"
-                }, method="POST")
                 try:
-                    with urlopen(req, timeout=25) as response:
-                        result = json.loads(response.read())
-                    answer = "".join(block.get("text", "") for block in result.get("content", []) if block.get("type") == "text").strip()
+                    answer = anthropic_answer(anthropic_key, safe_messages, timeout=12)
                 except HTTPError as error:
-                    return respond(self, 502, {"error": "AI provider rejected the request.", "provider_status": error.code, "detail": error.read(1200).decode("utf-8", "replace")})
+                    return respond(self, 502, {
+                        "error": "AI provider rejected the request.",
+                        "provider_status": error.code,
+                        "detail": error.read(1200).decode("utf-8", "replace"),
+                    })
             else:
                 model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
                 try:
-                    with urlopen(gemini_request(model, google_key, safe_messages), timeout=25) as response:
-                        result = json.loads(response.read())
-                except HTTPError as error:
-                    detail = error.read(1200).decode("utf-8", "replace")
-                    # Gemini can retire a model for new API users. Retry once with its
-                    # provider-recommended current model, without retrying auth/quota errors.
-                    if error.code != 404 or model == DEFAULT_GEMINI_MODEL:
-                        return respond(self, 502, {"error": "AI provider rejected the request.", "provider_status": error.code, "detail": detail})
                     try:
-                        with urlopen(gemini_request(DEFAULT_GEMINI_MODEL, google_key, safe_messages), timeout=25) as response:
+                        with urlopen(gemini_request(model, google_key, safe_messages), timeout=12) as response:
                             result = json.loads(response.read())
-                    except HTTPError as retry_error:
+                    except HTTPError as error:
+                        detail = error.read(1200).decode("utf-8", "replace")
+                        # Retry retired configured models once using the provider default.
+                        if error.code != 404 or model == DEFAULT_GEMINI_MODEL:
+                            raise
+                        try:
+                            with urlopen(gemini_request(DEFAULT_GEMINI_MODEL, google_key, safe_messages), timeout=12) as response:
+                                result = json.loads(response.read())
+                        except HTTPError as retry_error:
+                            return respond(self, 502, {
+                                "error": "AI provider rejected the request after model fallback.",
+                                "provider_status": retry_error.code,
+                                "detail": retry_error.read(1200).decode("utf-8", "replace"),
+                            })
+                    answer = "".join(
+                        part.get("text", "")
+                        for part in result.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    ).strip()
+                except (URLError, TimeoutError) as google_error:
+                    # A slow/unreachable Gemini endpoint must not block the app indefinitely.
+                    # Try the configured Anthropic provider once when available.
+                    if not anthropic_key:
                         return respond(self, 502, {
-                            "error": "AI provider rejected the request after model fallback.",
-                            "provider_status": retry_error.code,
-                            "detail": retry_error.read(1200).decode("utf-8", "replace"),
+                            "error": "Gemini timed out or could not be reached.",
+                            "detail": str(google_error)[:300],
                         })
-                answer = "".join(part.get("text", "") for part in result.get("candidates", [{}])[0].get("content", {}).get("parts", [])).strip()
-
+                    try:
+                        answer = anthropic_answer(anthropic_key, safe_messages, timeout=12)
+                    except HTTPError as fallback_error:
+                        return respond(self, 502, {
+                            "error": "Gemini failed and Anthropic fallback was rejected.",
+                            "provider_status": fallback_error.code,
+                            "detail": fallback_error.read(1200).decode("utf-8", "replace"),
+                        })
+                    except (URLError, TimeoutError) as fallback_error:
+                        return respond(self, 502, {
+                            "error": "Gemini and Anthropic providers timed out or could not be reached.",
+                            "detail": str(fallback_error)[:300],
+                        })
             if not answer:
                 return respond(self, 502, {"error": "AI provider returned an empty response."})
             return respond(self, 200, {"reply": answer})
