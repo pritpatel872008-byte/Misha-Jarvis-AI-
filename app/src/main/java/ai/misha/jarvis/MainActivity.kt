@@ -187,7 +187,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 lower == "lock my phone" || lower == "lock phone" -> { lockPhone(); status = "Device lock requested. Activate device admin if prompted."; input = ""; return }
                 lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") -> {
                     val request = if (lower.startsWith("send whatsapp ")) prompt.substringAfter("whatsapp ", ignoreCase = true) else prompt.substringAfter(' ')
-                    val parts = request.split(Regex("\\s+message\\s+"), limit = 2, ignoreCase = true)
+                    val parts = request.split(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE), limit = 2)
                     if (parts.size < 2 || parts[0].isBlank() || parts[1].isBlank()) {
                         status = "Use: WhatsApp CONTACT NAME message your message text."
                         input = ""; return
