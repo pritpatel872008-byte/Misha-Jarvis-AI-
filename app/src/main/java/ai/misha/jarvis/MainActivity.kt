@@ -173,12 +173,12 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 lower.contains("speak english") || lower.contains("english voice") || lower.contains("english mein bolo") -> { setVoiceLanguage("en-US"); status = "Switching to English voice."; input = ""; return }
                 lower.contains("speak japanese") || lower.contains("japanese voice") || lower.contains("nihongo") -> { setVoiceLanguage("ja-JP"); status = "Switching to Japanese voice."; input = ""; return }
                 lower.contains("voice settings") || lower.contains("tts settings") || lower.contains("change voice") -> { try { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }; status = "Choose your installed system voice engine and voice."; input = ""; return }
-                lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/"))); status = "Opening live weather."; input = ""; return }
                 lower.startsWith("search ") || lower.startsWith("google ") -> {
                     val query = prompt.substringAfter(' ').trim()
                     context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode(query))))
                     status = "Opening Google search."; input = ""; return
                 }
+                lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/"))); status = "Opening live weather."; input = ""; return }
                 lower.startsWith("call ") || lower.startsWith("dial ") -> {
                     val number = prompt.substringAfter(' ').trim()
                     context.startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + android.net.Uri.encode(number))))
