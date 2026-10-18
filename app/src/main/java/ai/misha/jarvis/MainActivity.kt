@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         tts = if (packageManager.getLaunchIntentForPackage("com.google.android.tts") != null) TextToSpeech(this, this, "com.google.android.tts") else TextToSpeech(this, this)
-        setContent { MishaApp(::speak, ::askBackend, ::lockPhone, ::openYouTube, ::setVoiceLanguage) }
+        setContent { MishaApp(::speak, ::askBackend, ::lockPhone, ::openYouTube, ::setVoiceLanguage, ::enableFloatingBubble) }
     }
     private fun lockPhone() {
         val policy = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
@@ -54,6 +54,19 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         } else startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin).putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Allow Misha to lock this phone only when you tap Lock my phone."))
     }
     private fun openYouTube() { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/"))) }
+    private fun enableFloatingBubble() {
+        if (!Settings.canDrawOverlays(this)) {
+            try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))) }
+            catch (_: Exception) { speak("Please enable Display over other apps for Misha in Android Settings.") }
+            return
+        }
+        try {
+            startService(Intent(this, MishaBubbleService::class.java))
+            speak("Floating Misha bubble enabled. Tap it to return to me.")
+        } catch (_: Exception) {
+            speak("I couldn't start the floating bubble. Check overlay permission and try again.")
+        }
+    }
     private fun setVoiceLanguage(languageTag: String) {
         val engine = tts ?: return
         getSharedPreferences("misha_voice", MODE_PRIVATE).edit().putString("language", languageTag).apply()
@@ -121,7 +134,7 @@ private val Violet = Color(0xFF9D7BFF)
 private data class Message(val id: String = UUID.randomUUID().toString(), val prompt: String, val answer: String)
 
 @Composable
-private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> Unit) -> Unit, lockPhone: () -> Unit, openYouTube: () -> Unit, setVoiceLanguage: (String) -> Unit) {
+private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> Unit) -> Unit, lockPhone: () -> Unit, openYouTube: () -> Unit, setVoiceLanguage: (String) -> Unit, enableFloatingBubble: () -> Unit) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -223,7 +236,10 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     OutlinedButton(onClick = { when { action.contains("Lock") -> { lockPhone(); status = "Activate device admin if prompted, then tap Lock my phone again." }; else -> send(action) } }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)) { Text(action, fontSize = 10.sp) }
                 }
             }
-            OutlinedButton(onClick = { openYouTube(); status = "Opening YouTube." }, modifier = Modifier.fillMaxWidth()) { Text("Open YouTube") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { openYouTube(); status = "Opening YouTube." }, modifier = Modifier.weight(1f)) { Text("Open YouTube") }
+                OutlinedButton(onClick = { enableFloatingBubble(); status = if (Settings.canDrawOverlays(context)) "Floating Misha bubble enabled." else "Allow overlay permission, then tap this again." }, modifier = Modifier.weight(1f)) { Text("Floating Misha") }
+            }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Ask Misha anything…") }, shape = RoundedCornerShape(16.dp), trailingIcon = { TextButton(enabled = !busy, onClick = { send(input) }) { Text(if (busy) "…" else "Send") } }, maxLines = 3)
             Spacer(Modifier.height(12.dp))
