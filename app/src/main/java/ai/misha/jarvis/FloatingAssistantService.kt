@@ -30,6 +30,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.openwakeword.OpenWakeWord
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -51,6 +52,9 @@ class FloatingAssistantService : Service() {
     private var downX = 0f
     private var downY = 0f
     private var recognizer: SpeechRecognizer? = null
+    private var wakeWordDetector: OpenWakeWord? = null
+    @Volatile private var wakeWordActive = false
+    private var wakeWordModelAvailable = false
     private var tts: TextToSpeech? = null
     private var transcript: TextView? = null
     private var input: EditText? = null
@@ -69,9 +73,61 @@ class FloatingAssistantService : Service() {
                 tts?.let { engine -> MishaVoiceProfile.configure(engine, if (tag == "ja-JP") Locale.JAPANESE else Locale.US) }
             }
         }
-        if (Settings.canDrawOverlays(this)) attachBubble() else stopSelf()
+        wakeWordModelAvailable = hasHeyMishaModel()
+        if (Settings.canDrawOverlays(this)) {
+            attachBubble()
+            if (wakeWordModelAvailable && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startWakeWordDetector()
+        } else stopSelf()
     }
 
+    /**
+     * Uses an actual on-device openWakeWord classifier. The model must be trained specifically
+     * for "Hey Misha"; a generic Hey Jarvis model is deliberately not substituted.
+     */
+    private fun hasHeyMishaModel(): Boolean = try {
+        assets.open(HEY_MISHA_MODEL_ASSET).use { true }
+    } catch (_: Exception) { false }
+
+    private fun startWakeWordDetector() {
+        if (wakeWordActive || !wakeWordModelAvailable || popup != null) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+        try {
+            wakeWordDetector?.release()
+            val detector = OpenWakeWord.Builder(applicationContext)
+                .setModelAsset(HEY_MISHA_MODEL_ASSET)
+                .setThreshold(0.62f)
+                .setDebounceMs(2500L)
+                .build()
+            wakeWordDetector = detector
+            wakeWordActive = true
+            detector.start { score ->
+                if (score >= 0.62f && wakeWordActive) {
+                    wakeWordActive = false
+                    try { detector.stop() } catch (_: Exception) {}
+                    android.os.Handler(mainLooper).post {
+                        if (popup == null) showPopup()
+                        transcript?.text = "I heard Hey Misha. Listening to your request…"
+                        android.os.Handler(mainLooper).postDelayed({ listenOnce() }, 450)
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            wakeWordActive = false
+            wakeWordModelAvailable = false
+            wakeWordDetector = null
+            updateNotificationForWakeWord()
+        }
+    }
+
+    private fun stopWakeWordDetector() {
+        wakeWordActive = false
+        try { wakeWordDetector?.stop() } catch (_: Exception) {}
+    }
+
+    private fun updateNotificationForWakeWord() {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification())
+    }
     private fun buildNotification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -80,7 +136,7 @@ class FloatingAssistantService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("Misha floating assistant is active")
-            .setContentText("Tap M to chat. Microphone starts only when you tap the mic.")
+            .setContentText(if (wakeWordModelAvailable) "Hey Misha wake-word listening is active on-device. Tap M to chat." else "Wake-word model not installed. Tap M to chat or tap Mic.")
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .addAction(0, "Stop", stopPendingIntent())
