@@ -52,6 +52,10 @@ class ProviderResponse:
 
 
 class ChatApiTests(unittest.TestCase):
+    def setUp(self):
+        for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_WORKSPACE_ID", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_MODEL"):
+            os.environ.pop(key, None)
+
     def test_root_health_check_returns_200(self):
         h = FakeHandler(path="/")
         h.do_GET()
@@ -60,24 +64,21 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "online")
         self.assertEqual(result["chat_endpoint"], "POST /api/ai/chat")
 
-    def setUp(self):
-        for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_WORKSPACE_ID", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_MODEL"):
-            os.environ.pop(key, None)
-
-    def test_missing_provider_key_returns_clear_503(self):
+    def test_missing_gemini_key_returns_clear_503_even_if_anthropic_key_exists(self):
+        os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
         body = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
         h = FakeHandler(body, {"Content-Length": str(len(body))})
         h.do_POST()
         status, result = h.result()
         self.assertEqual(status, 503)
-        self.assertIn("not configured", result["error"])
+        self.assertIn("Gemini is not configured", result["error"])
 
     def test_malformed_json_returns_400(self):
         h = FakeHandler(b"{", {"Content-Length": "1"})
         h.do_POST()
         status, result = h.result()
         self.assertEqual(status, 400)
-        self.assertIn("valid JSON", result["error"])
+        self.assertIn("Malformed JSON", result["error"])
 
     def test_invalid_message_shape_returns_422(self):
         body = json.dumps({"messages": [{"role": "system", "content": "bad"}]}).encode()
@@ -87,7 +88,7 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(status, 422)
 
     @patch.object(api, "urlopen")
-    def test_gemini_used_when_both_provider_keys_exist(self, mock_urlopen):
+    def test_gemini_used_when_anthropic_key_also_exists(self, mock_urlopen):
         os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
         os.environ["GEMINI_API_KEY"] = "gemini-test-key"
         mock_urlopen.return_value = ProviderResponse({
@@ -103,9 +104,9 @@ class ChatApiTests(unittest.TestCase):
         self.assertIn(api.DEFAULT_GEMINI_MODEL, mock_urlopen.call_args.args[0].full_url)
 
     @patch.object(api, "urlopen")
-    def test_retired_gemini_model_retries_current_default(self, mock_urlopen):
+    def test_unavailable_configured_model_retries_default(self, mock_urlopen):
         os.environ["GEMINI_API_KEY"] = "gemini-test-key"
-        os.environ["GEMINI_MODEL"] = "gemini-2.5-flash"
+        os.environ["GEMINI_MODEL"] = "unavailable-model"
         retired = HTTPError(
             "https://generativelanguage.googleapis.com/", 404, "not found", {},
             io.BytesIO(b'{"error":{"message":"model unavailable"}}')
@@ -121,11 +122,11 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["reply"], "Working reply")
         self.assertEqual(mock_urlopen.call_count, 2)
-        self.assertIn("models/gemini-2.5-flash:", mock_urlopen.call_args_list[0].args[0].full_url)
+        self.assertIn("models/unavailable-model:", mock_urlopen.call_args_list[0].args[0].full_url)
         self.assertIn("models/" + api.DEFAULT_GEMINI_MODEL + ":", mock_urlopen.call_args_list[1].args[0].full_url)
 
     @patch.object(api, "urlopen")
-    def test_provider_http_error_returns_502_without_crashing(self, mock_urlopen):
+    def test_gemini_http_error_returns_502(self, mock_urlopen):
         os.environ["GEMINI_API_KEY"] = "gemini-test-key"
         mock_urlopen.side_effect = HTTPError(
             "https://generativelanguage.googleapis.com/", 400, "bad key", {},
@@ -138,43 +139,18 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(status, 502)
         self.assertEqual(result["provider_status"], 400)
 
-
     @patch.object(api, "urlopen")
-    def test_gemini_timeout_falls_back_to_anthropic(self, mock_urlopen):
+    def test_gemini_timeout_returns_502_without_calling_anthropic(self, mock_urlopen):
         os.environ["GEMINI_API_KEY"] = "gemini-test-key"
         os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
-        mock_urlopen.side_effect = [
-            TimeoutError("Gemini read timed out"),
-            ProviderResponse({"content": [{"type": "text", "text": "Fallback reply"}]}),
-        ]
+        mock_urlopen.side_effect = TimeoutError("Gemini read timed out")
         body = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
         h = FakeHandler(body, {"Content-Length": str(len(body))})
         h.do_POST()
         status, result = h.result()
-        self.assertEqual(status, 200)
-        self.assertEqual(result["reply"], "Fallback reply")
-        self.assertEqual(mock_urlopen.call_count, 2)
-        self.assertIn("generativelanguage.googleapis.com", mock_urlopen.call_args_list[0].args[0].full_url)
-        self.assertIn("api.anthropic.com", mock_urlopen.call_args_list[1].args[0].full_url)
-
-
-    @patch.object(api, "urlopen")
-    def test_workspace_scoped_anthropic_key_is_used_directly(self, mock_urlopen):
-        os.environ["GEMINI_API_KEY"] = "gemini-test-key"
-        os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
-        os.environ["ANTHROPIC_WORKSPACE_ID"] = "workspace-test-id"
-        mock_urlopen.return_value = ProviderResponse({
-            "content": [{"type": "text", "text": "Anthropic reply"}]
-        })
-        body = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
-        h = FakeHandler(body, {"Content-Length": str(len(body))})
-        h.do_POST()
-        status, result = h.result()
-        self.assertEqual(status, 200)
-        self.assertEqual(result["reply"], "Anthropic reply")
-        request = mock_urlopen.call_args.args[0]
-        self.assertIn("api.anthropic.com", request.full_url)
-        self.assertEqual(request.get_header("Anthropic-workspace-id"), "workspace-test-id")
+        self.assertEqual(status, 502)
+        self.assertIn("Gemini timed out", result["error"])
+        self.assertEqual(mock_urlopen.call_count, 1)
 
 
 if __name__ == "__main__":
