@@ -81,13 +81,11 @@ class handler(BaseHTTPRequestHandler):
                     with urlopen(gemini_request(model, google_key, safe_messages), timeout=20) as response:
                         result = json.loads(response.read())
                 except HTTPError as error:
-                    detail = error.read(1200).decode("utf-8", "replace")
-                    # Retry a stale or unavailable configured model once with the supported default.
+                    # Never return raw provider bodies: they may contain sensitive diagnostics.
                     if error.code != 404 or model == DEFAULT_GEMINI_MODEL:
                         return respond(self, 502, {
                             "error": "Gemini rejected the request.",
                             "provider_status": error.code,
-                            "detail": detail,
                         })
                     try:
                         with urlopen(gemini_request(DEFAULT_GEMINI_MODEL, google_key, safe_messages), timeout=20) as response:
@@ -96,12 +94,10 @@ class handler(BaseHTTPRequestHandler):
                         return respond(self, 502, {
                             "error": "Gemini rejected the request after model fallback.",
                             "provider_status": retry_error.code,
-                            "detail": retry_error.read(1200).decode("utf-8", "replace"),
                         })
             except (URLError, TimeoutError) as error:
                 return respond(self, 502, {
                     "error": "Gemini timed out or could not be reached.",
-                    "detail": str(error)[:300],
                 })
 
             answer = "".join(
