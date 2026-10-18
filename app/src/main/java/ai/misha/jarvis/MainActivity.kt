@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        tts = if (packageManager.getLaunchIntentForPackage("com.google.android.tts") != null) TextToSpeech(this, this, "com.google.android.tts") else TextToSpeech(this, this)
+        tts = TextToSpeech(this, this)
         setContent { MishaApp(::speak, ::askBackend, ::lockPhone, ::openYouTube, ::setVoiceLanguage, ::enableFloatingBubble) }
     }
     private fun lockPhone() {
@@ -172,6 +172,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 lower.contains("hindi mein bolo") || lower.contains("hindi voice") || lower.contains("speak hindi") -> { setVoiceLanguage("hi-IN"); status = "Switching to Hindi voice."; input = ""; return }
                 lower.contains("speak english") || lower.contains("english voice") || lower.contains("english mein bolo") -> { setVoiceLanguage("en-US"); status = "Switching to English voice."; input = ""; return }
                 lower.contains("speak japanese") || lower.contains("japanese voice") || lower.contains("nihongo") -> { setVoiceLanguage("ja-JP"); status = "Switching to Japanese voice."; input = ""; return }
+                lower.contains("voice settings") || lower.contains("tts settings") || lower.contains("change voice") -> { try { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }; status = "Choose your installed system voice engine and voice."; input = ""; return }
                 lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/"))); status = "Opening live weather."; input = ""; return }
                 lower.startsWith("search ") || lower.startsWith("google ") -> {
                     val query = prompt.substringAfter(' ').trim()
@@ -240,6 +241,9 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 OutlinedButton(onClick = { openYouTube(); status = "Opening YouTube." }, modifier = Modifier.weight(1f)) { Text("Open YouTube") }
                 OutlinedButton(onClick = { enableFloatingBubble(); status = if (Settings.canDrawOverlays(context)) "Floating Misha bubble enabled." else "Allow overlay permission, then tap this again." }, modifier = Modifier.weight(1f)) { Text("Floating Misha") }
             }
+            OutlinedButton(onClick = { try { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }; status = "Select the installed system voice engine in Android settings." }, modifier = Modifier.fillMaxWidth()) { Text("Voice engine settings") }
+            /*
+            */
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Ask Misha anything…") }, shape = RoundedCornerShape(16.dp), trailingIcon = { TextButton(enabled = !busy, onClick = { send(input) }) { Text(if (busy) "…" else "Send") } }, maxLines = 3)
             Spacer(Modifier.height(12.dp))
