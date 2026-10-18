@@ -1,40 +1,73 @@
 package ai.misha.jarvis
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
-import android.graphics.PixelFormat
-import android.os.Build
-import android.os.IBinder
-import android.provider.Settings
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.WindowManager
-import android.widget.TextView
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Bundle
+import android.os.IBinder
+import android.provider.Settings
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.Executors
 import kotlin.math.abs
 
-/**
- * User-enabled floating entry point. It intentionally does not listen to the microphone:
- * wake-word listening requires a separately permission-gated, device-validated audio pipeline.
- */
+/** User-controlled floating assistant. The microphone is used only after the user taps the mic button. */
 class FloatingAssistantService : Service() {
     private var windowManager: WindowManager? = null
     private var bubble: TextView? = null
-    private var layoutParams: WindowManager.LayoutParams? = null
+    private var popup: View? = null
+    private var bubbleParams: WindowManager.LayoutParams? = null
+    private var popupParams: WindowManager.LayoutParams? = null
     private var startX = 0
     private var startY = 0
     private var downX = 0f
     private var downY = 0f
+    private var recognizer: SpeechRecognizer? = null
+    private var tts: TextToSpeech? = null
+    private var transcript: TextView? = null
+    private var input: EditText? = null
+    private var sendButton: Button? = null
+    private var micButton: Button? = null
+    private var busy = false
+    private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate() {
         super.onCreate()
         startForeground(NOTIFICATION_ID, buildNotification())
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
+                tts?.language = if (tag == "ja-JP") Locale.JAPANESE else Locale.US
+            }
+        }
         if (Settings.canDrawOverlays(this)) attachBubble() else stopSelf()
     }
 
@@ -46,7 +79,7 @@ class FloatingAssistantService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("Misha floating assistant is active")
-            .setContentText("Tap the M bubble to open Misha. Tap Stop to dismiss the floating assistant.")
+            .setContentText("Tap M to chat. Microphone starts only when you tap the mic.")
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .addAction(0, "Stop", stopPendingIntent())
@@ -55,11 +88,8 @@ class FloatingAssistantService : Service() {
 
     private fun stopPendingIntent(): android.app.PendingIntent {
         val intent = Intent(this, FloatingAssistantService::class.java).setAction(ACTION_STOP)
-        return android.app.PendingIntent.getService(
-            this, 74, intent,
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
-                (if (Build.VERSION.SDK_INT >= 23) android.app.PendingIntent.FLAG_IMMUTABLE else 0)
-        )
+        return android.app.PendingIntent.getService(this, 74, intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) android.app.PendingIntent.FLAG_IMMUTABLE else 0))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -71,33 +101,22 @@ class FloatingAssistantService : Service() {
         if (bubble != null || !Settings.canDrawOverlays(this)) return
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val view = TextView(this).apply {
-            text = "M"
-            textSize = 23f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
+            text = "M"; textSize = 23f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                intArrayOf(Color.rgb(157, 123, 255), Color.rgb(67, 42, 145))
-            ).apply { shape = GradientDrawable.OVAL; setStroke(2, Color.rgb(220, 195, 255)) }
-            contentDescription = "Open Misha assistant"
-            elevation = 12f
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.rgb(157, 123, 255), Color.rgb(67, 42, 145))).apply {
+                shape = GradientDrawable.OVAL; setStroke(2, Color.rgb(220, 195, 255))
+            }
+            contentDescription = "Open Misha assistant"; elevation = 12f
         }
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
-        val params = WindowManager.LayoutParams(
-            dp(60), dp(60), type,
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                   else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+        val params = WindowManager.LayoutParams(dp(60), dp(60), type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START; x = dp(16); y = dp(180) }
+            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.START; x = dp(16); y = dp(180) }
         view.setOnTouchListener { _, event ->
             when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = event.rawX; downY = event.rawY
-                    startX = params.x; startY = params.y
-                    true
-                }
+                MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY; startX = params.x; startY = params.y; true }
                 MotionEvent.ACTION_MOVE -> {
                     params.x = startX + (event.rawX - downX).toInt()
                     params.y = startY + (event.rawY - downY).toInt()
@@ -105,24 +124,145 @@ class FloatingAssistantService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (abs(event.rawX - downX) < dp(8).toFloat() && abs(event.rawY - downY) < dp(8).toFloat()) {
-                        val launch = packageManager.getLaunchIntentForPackage(packageName)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        if (launch != null) startActivity(launch)
-                    }
+                    if (abs(event.rawX - downX) < dp(8).toFloat() && abs(event.rawY - downY) < dp(8).toFloat()) showPopup()
                     true
                 }
                 else -> true
             }
         }
-        try { windowManager?.addView(view, params); bubble = view; layoutParams = params }
+        try { windowManager?.addView(view, params); bubble = view; bubbleParams = params }
         catch (_: Exception) { stopSelf() }
     }
+
+    private fun showPopup() {
+        if (popup != null) { hidePopup(); return }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = GradientDrawable().apply { setColor(Color.rgb(15, 15, 31)); cornerRadius = dp(24).toFloat(); setStroke(dp(1), Color.rgb(157, 123, 255)) }
+            elevation = 20f
+        }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(TextView(this).apply {
+            text = "MISHA  •  What can I help you with?"; textSize = 16f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+        }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        header.addView(Button(this).apply { text = "×"; setOnClickListener { hidePopup() } }, LinearLayout.LayoutParams(dp(48), dp(44)))
+        panel.addView(header)
+        transcript = TextView(this).apply {
+            text = "Ready. Type a request or tap the mic. Voice commands are submitted automatically."
+            textSize = 13f; setTextColor(Color.rgb(220, 218, 238)); setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        val scroll = ScrollView(this).apply { addView(transcript) }
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, dp(150)))
+        input = EditText(this).apply {
+            hint = "Type in English or Japanese…"; setHintTextColor(Color.GRAY); setTextColor(Color.WHITE)
+            setSingleLine(false); minLines = 1; maxLines = 4
+            background = GradientDrawable().apply { setColor(Color.rgb(29, 28, 49)); cornerRadius = dp(12).toFloat() }
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        panel.addView(input, LinearLayout.LayoutParams(-1, dp(60)))
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) }
+        micButton = Button(this).apply { text = "🎙 Mic"; setOnClickListener { listenOnce() } }
+        sendButton = Button(this).apply { text = "Send"; setOnClickListener { submit(input?.text?.toString().orEmpty()) } }
+        actions.addView(micButton, LinearLayout.LayoutParams(0, dp(48), 1f))
+        actions.addView(sendButton, LinearLayout.LayoutParams(0, dp(48), 1f))
+        panel.addView(actions)
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                   else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+        val params = WindowManager.LayoutParams((resources.displayMetrics.widthPixels - dp(28)).coerceAtLeast(dp(280)),
+            dp(350), type, WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,
+            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.CENTER }
+        try {
+            windowManager?.addView(panel, params); popup = panel; popupParams = params
+            panel.isFocusableInTouchMode = true; panel.requestFocus()
+        } catch (_: Exception) { transcript?.text = "Couldn't open the chat overlay. Check Display over other apps permission." }
+    }
+
+    private fun hidePopup() {
+        try { popup?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
+        popup = null; popupParams = null; input = null; transcript = null; sendButton = null; micButton = null
+        try { recognizer?.cancel() } catch (_: Exception) {}
+    }
+
+    private fun listenOnce() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            transcript?.text = "Microphone permission is missing. Open Misha and allow Microphone in Android Settings."; return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) { transcript?.text = "Speech recognition is unavailable on this phone."; return }
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        micButton?.isEnabled = false
+        recognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) { transcript?.text = "Listening… speak now." }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) { transcript?.text = "Voice recognition failed ($error). Please try again or type."; micButton?.isEnabled = true }
+            override fun onResults(results: Bundle?) {
+                val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                micButton?.isEnabled = true
+                if (spoken.isNullOrBlank()) transcript?.text = "I didn't catch that. Try again."
+                else { input?.setText(spoken); submit(spoken) }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        val language = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US") ?: "en-US"
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+        }
+        try { recognizer?.startListening(intent) } catch (_: Exception) { micButton?.isEnabled = true; transcript?.text = "Couldn't start speech recognition. Try again." }
+    }
+
+    private fun submit(prompt: String) {
+        val clean = prompt.trim()
+        if (clean.isBlank() || busy) return
+        busy = true; sendButton?.isEnabled = false; micButton?.isEnabled = false
+        transcript?.text = "You: $clean\n\nMisha is thinking…"
+        executor.execute {
+            var connection: HttpURLConnection? = null
+            val result = try {
+                connection = (URL("https://misha-voice-ai-api.vercel.app/api/ai/chat").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"; connectTimeout = 12000; readTimeout = 20000
+                    setRequestProperty("Content-Type", "application/json"); doOutput = true
+                }
+                connection.outputStream.use { it.write(JSONObject().put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", clean))).toString().toByteArray(Charsets.UTF_8)) }
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (code !in 200..299) "Assistant service returned HTTP $code: ${body.take(180)}"
+                else parseReply(body)
+            } catch (_: Exception) { "I couldn't reach the assistant service. Check your internet connection and try again." }
+            finally { connection?.disconnect() }
+            android.os.Handler(mainLooper).post {
+                busy = false; sendButton?.isEnabled = true; micButton?.isEnabled = true
+                transcript?.text = "You: $clean\n\nMisha: $result"
+                val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
+                tts?.language = if (tag == "ja-JP") Locale.JAPANESE else Locale.US
+                tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+            }
+        }
+    }
+
+    private fun parseReply(body: String): String = try {
+        val obj = JSONObject(body)
+        listOf("reply", "response", "message", "output_text", "answer").firstNotNullOfOrNull { key ->
+            obj.optString(key).takeIf { it.isNotBlank() && it != "null" }
+        } ?: obj.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+            ?: body.take(500)
+    } catch (_: Exception) { body.take(500) }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
+        hidePopup()
         try { bubble?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         bubble = null
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        tts?.shutdown()
+        executor.shutdownNow()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
