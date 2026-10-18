@@ -105,7 +105,7 @@ class FloatingAssistantService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (abs(event.rawX - downX) < dp(8) && abs(event.rawY - downY) < dp(8)) {
+                    if (abs(event.rawX - downX) < dp(8).toFloat() && abs(event.rawY - downY) < dp(8).toFloat()) {
                         val launch = packageManager.getLaunchIntentForPackage(packageName)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         if (launch != null) startActivity(launch)
                     }
