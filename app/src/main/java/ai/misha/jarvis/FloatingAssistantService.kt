@@ -57,6 +57,7 @@ class FloatingAssistantService : Service() {
     private var sendButton: Button? = null
     private var micButton: Button? = null
     private var busy = false
+    private val conversationHistory = mutableListOf<Pair<String, String>>()
     private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate() {
@@ -231,6 +232,9 @@ class FloatingAssistantService : Service() {
         }
         busy = true; sendButton?.isEnabled = false; micButton?.isEnabled = false
         transcript?.text = "You: $clean\n\nMisha is thinking…"
+        val languageTag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
+        val languagePrompt = if (languageTag == "ja-JP") "Reply in Japanese. User request: $clean" else "Reply in English. User request: $clean"
+        val historySnapshot = conversationHistory.toList()
         executor.execute {
             var connection: HttpURLConnection? = null
             val result = try {
@@ -238,9 +242,10 @@ class FloatingAssistantService : Service() {
                     requestMethod = "POST"; connectTimeout = 12000; readTimeout = 20000
                     setRequestProperty("Content-Type", "application/json"); doOutput = true
                 }
-                val languageTag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
-                val languagePrompt = if (languageTag == "ja-JP") "Reply in Japanese. User request: $clean" else "Reply in English. User request: $clean"
-                connection.outputStream.use { it.write(JSONObject().put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", languagePrompt))).toString().toByteArray(Charsets.UTF_8)) }
+                val messages = JSONArray()
+                historySnapshot.forEach { (role, content) -> messages.put(JSONObject().put("role", role).put("content", content)) }
+                messages.put(JSONObject().put("role", "user").put("content", languagePrompt))
+                connection.outputStream.use { it.write(JSONObject().put("messages", messages).toString().toByteArray(Charsets.UTF_8)) }
                 val code = connection.responseCode
                 val stream = if (code in 200..299) connection.inputStream else connection.errorStream
                 val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
@@ -251,6 +256,9 @@ class FloatingAssistantService : Service() {
             android.os.Handler(mainLooper).post {
                 busy = false; sendButton?.isEnabled = true; micButton?.isEnabled = true
                 transcript?.text = "You: $clean\n\nMisha: $result"
+                conversationHistory.add("user" to languagePrompt)
+                conversationHistory.add("assistant" to result)
+                while (conversationHistory.size > 20) conversationHistory.removeAt(0)
                 val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
                 tts?.let { engine ->
                     MishaVoiceProfile.configure(engine, if (tag == "ja-JP") Locale.JAPANESE else Locale.US)
