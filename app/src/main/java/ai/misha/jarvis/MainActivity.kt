@@ -575,7 +575,11 @@ private fun findContactNumber(context: android.content.Context, name: String): S
                 candidates.add(Triple(display, number, score))
             }
         }
-        candidates.minByOrNull { it.third }?.second
+        if (candidates.isEmpty()) return null
+        val bestScore = candidates.minOf { it.third }
+        val best = candidates.filter { it.third == bestScore }
+            .distinctBy { it.second.filter(Char::isDigit) }
+        if (best.size != 1 || bestScore >= 3) null else best.single().second
     } catch (_: SecurityException) { null } catch (_: Exception) { null }
 }
 
