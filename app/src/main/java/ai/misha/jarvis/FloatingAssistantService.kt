@@ -436,7 +436,7 @@ class FloatingAssistantService : Service() {
             return true
         }
         val target = when {
-            name.contains("youtube") -> "https://www.youtube.com/results?search_query=$encoded"
+            name.contains("youtube") -> "https://www.youtube.com/results?search_query=$encoded&sp=EgIQAg%3D%3D"
             name.contains("instagram") -> "https://www.instagram.com/explore/search/keyword/?q=$encoded"
             name.contains("chrome") -> "https://www.google.com/search?q=$encoded"
             else -> null
