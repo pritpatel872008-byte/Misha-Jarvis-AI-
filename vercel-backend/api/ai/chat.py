@@ -48,6 +48,52 @@ class DDGParser(HTMLParser):
             self._capture = None
 
 
+class ArticleTextParser(HTMLParser):
+    BLOCK_TAGS = {"p", "div", "article", "section", "h1", "h2", "h3", "li", "br"}
+
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+        self.skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style", "noscript", "svg", "nav", "footer", "header", "form"}:
+            self.skip_depth += 1
+        elif self.skip_depth == 0 and tag in self.BLOCK_TAGS:
+            self.parts.append("\\n")
+
+    def handle_endtag(self, tag):
+        if tag in {"script", "style", "noscript", "svg", "nav", "footer", "header", "form"} and self.skip_depth:
+            self.skip_depth -= 1
+        elif self.skip_depth == 0 and tag in self.BLOCK_TAGS:
+            self.parts.append("\\n")
+
+    def handle_data(self, data):
+        if self.skip_depth == 0:
+            cleaned = re.sub(r"\\s+", " ", data).strip()
+            if cleaned:
+                self.parts.append(cleaned + " ")
+
+
+def fetch_article_text(url):
+    # Only public HTTP(S) pages; bound response size and timeout to keep requests predictable.
+    if not url.startswith(("https://", "http://")):
+        return ""
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; MishaReader/1.0)"})
+    try:
+        with urlopen(request, timeout=7) as response:
+            content_type = response.headers.get("Content-Type", "").lower()
+            if content_type and "html" not in content_type and "text/plain" not in content_type:
+                return ""
+            html = response.read(350_000).decode("utf-8", "replace")
+        parser = ArticleTextParser()
+        parser.feed(html)
+        text = re.sub(r"\\s+", " ", " ".join(parser.parts)).strip()
+        return text[:18000]
+    except (URLError, TimeoutError, HTTPError, ValueError, OSError):
+        return ""
+
+
 def web_search(query):
     request = Request(
         "https://html.duckduckgo.com/html/?q=" + quote_plus(query),
@@ -60,15 +106,22 @@ def web_search(query):
     seen, results = set(), []
     for item in parser.results:
         url = item.get("url", "").strip()
-        if not url.startswith("http") or url in seen:
+        if not url.startswith(("https://", "http://")) or url in seen:
             continue
         seen.add(url)
-        results.append({"title": re.sub(r"\s+", " ", item["title"]).strip(),
-                        "snippet": re.sub(r"\s+", " ", item.get("snippet", "")).strip(),
-                        "url": url})
+        title = re.sub(r"\\s+", " ", item.get("title", "")).strip()
+        snippet = re.sub(r"\\s+", " ", item.get("snippet", "")).strip()
+        if not title:
+            continue
+        results.append({"title": title, "snippet": snippet, "url": url})
         if len(results) >= 5:
             break
+    # Retrieve page text for deeper evidence; if a site blocks automated reading, preserve the real search snippet.
+    for item in results:
+        item["page_text"] = fetch_article_text(item["url"])
     return results
+
+
 
 
 def is_small_talk(text):
@@ -111,19 +164,73 @@ def respond(handler, status, payload):
     handler.wfile.write(body)
 
 
-def synthesize_web_results(query, results):
-    # Real retrieved snippets only: no external LLM provider or fabricated citations.
-    sections = ["## " + query.strip(), "", "Here is a concise, source-linked summary of the web results:"]
-    for index, item in enumerate(results, 1):
-        title, snippet, source = item.get("title", "").strip(), item.get("snippet", "").strip(), item.get("url", "").strip()
-        if not title or not source:
+def split_sentences(text):
+    return [part.strip() for part in re.split(r"(?<=[.!?])\\s+(?=[A-Z0-9])|[\\n]+", text) if len(part.strip()) >= 45]
+
+
+def summarize_evidence(query, text, max_sentences=4):
+    # Extractive summarization only: rank real sentences by query overlap and term frequency.
+    # No generated facts, external model API, or token-based service limits.
+    sentences = split_sentences(text)
+    if not sentences:
+        return ""
+    stop_words = {
+        "the", "and", "for", "that", "with", "this", "from", "are", "was", "were", "have", "has",
+        "had", "will", "would", "can", "could", "about", "into", "your", "you", "their", "they",
+        "what", "when", "where", "which", "who", "why", "how", "tell", "show", "find", "search",
+        "latest", "current", "information", "please", "does", "did", "not", "but", "its", "our",
+        "his", "her", "also", "than", "then", "there", "been", "being", "all", "any", "more"
+    }
+    def tokens(value):
+        return [t for t in re.findall(r"[a-z0-9]{2,}", value.lower()) if t not in stop_words]
+    query_tokens = set(tokens(query))
+    frequencies = {}
+    sentence_tokens = []
+    for sentence in sentences:
+        ts = tokens(sentence)
+        sentence_tokens.append(ts)
+        for token in set(ts):
+            frequencies[token] = frequencies.get(token, 0) + 1
+    ranked = []
+    for index, (sentence, ts) in enumerate(zip(sentences, sentence_tokens)):
+        if not ts:
             continue
-        sections.extend(["", f"### {index}. {title}"])
-        if snippet:
-            sections.append(snippet)
-        sections.append(f"**Source:** {source}")
-    sections.extend(["", "---", "These are search-result summaries, not independently verified claims. Open the source links for full context."])
-    return "\n".join(sections)
+        overlap = len(query_tokens.intersection(ts)) / max(1, len(query_tokens))
+        centrality = sum(1.0 / frequencies[token] for token in set(ts)) / max(1, len(set(ts)))
+        length_bonus = min(len(sentence), 220) / 2200.0
+        score = overlap * 3.0 + centrality + length_bonus
+        if overlap > 0 or not query_tokens:
+            ranked.append((score, index, sentence))
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+    selected = sorted(ranked[:max_sentences], key=lambda row: row[1])
+    return " ".join(row[2] for row in selected)
+
+
+def synthesize_web_results(query, results):
+    # Gather actual page text and snippets, then extract the most relevant real sentences.
+    sections = ["## Research summary", "", f"**Question:** {query.strip()}", ""]
+    source_count = 0
+    for item in results:
+        title = item.get("title", "").strip()
+        url = item.get("url", "").strip()
+        evidence = item.get("page_text", "").strip() or item.get("snippet", "").strip()
+        summary = summarize_evidence(query, evidence, max_sentences=3)
+        if not title or not url:
+            continue
+        source_count += 1
+        sections.append(f"### {source_count}. {title}")
+        if summary:
+            sections.extend(["", summary])
+        elif item.get("snippet"):
+            sections.extend(["", item["snippet"].strip()])
+        sections.extend(["", f"**Source:** {url}", ""])
+    if source_count == 0:
+        return "I couldn't find usable source material for that question. Please try a more specific search."
+    sections.extend([
+        "---", "",
+        "**How this answer was prepared:** I retrieved live search results, attempted to read the linked public pages, and selected relevant sentences from the retrieved text. This is an extractive summary, not a claim that every source has been independently verified."
+    ])
+    return "\\n".join(sections)
 
 
 def wants_web_search(text):
