@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate Python backend syntax
+        run: python3 -m py_compile vercel-backend/api/ai/chat.py vercel-backend/api/ai/misha_emotions.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
