@@ -121,6 +121,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
     var status by remember { mutableStateOf("Ready when you are.") }
     var language by remember { mutableStateOf(context.getSharedPreferences("misha_settings", 0).getString("language", "en-US") ?: "en-US") }
     var bubbleEnabled by remember { mutableStateOf(context.getSharedPreferences("misha_setup", 0).getBoolean("bubble_enabled", false)) }
+    var showPermissionSetup by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf(loadHistory(context)) }
     val recognizer = remember {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) null else try {
@@ -141,12 +142,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         val prefs = context.getSharedPreferences("misha_setup", 0)
         if (!prefs.getBoolean("permission_setup_requested", false)) {
             prefs.edit().putBoolean("permission_setup_requested", true).apply()
-            val missing = buildList {
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
-                if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            if (missing.isNotEmpty()) firstLaunchPermissions.launch(missing.toTypedArray())
+            showPermissionSetup = true
         }
     }
     DisposableEffect(recognizer) { onDispose { recognizer?.destroy() } }
@@ -265,6 +261,38 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             busy = false; status = "Response received."; speak(answer)
         }
     }
+    if (showPermissionSetup) {
+        AlertDialog(
+            onDismissRequest = { showPermissionSetup = false },
+            title = { Text("Misha phone access setup") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Review each permission before enabling it.")
+                    Text("• Microphone — voice commands; recording starts only after you tap the mic.")
+                    Text("• Contacts — find the right saved person for calling or WhatsApp.")
+                    Text("• Notifications — show the active background-assistant status.")
+                    Text("• Display over other apps — show the floating chat bubble.")
+                    Text("• Accessibility — read visible screen text on request and perform explicit Back/Home/notification or text-target actions.")
+                    Text("• Device admin — lock the phone only when you explicitly request it.")
+                    Text("Android requires separate approval screens for overlay, Accessibility and device admin. Misha cannot silently grant these.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPermissionSetup = false
+                    val missing = buildList {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
+                        if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    if (missing.isNotEmpty()) firstLaunchPermissions.launch(missing.toTypedArray()) else status = "Runtime permissions are already granted."
+                }) { Text("Grant runtime permissions") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermissionSetup = false }) { Text("Later") }
+            }
+        )
+    }
     MaterialTheme(colorScheme = darkColorScheme(primary = Violet, background = Night, surface = Color(0xFF15162B), onSurface = Color(0xFFF5F1FF))) {
         Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF201544), Night, Night))).padding(horizontal = 20.dp, vertical = 18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
@@ -286,44 +314,9 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     status = "日本語を選択しました。"
                 }, label = { Text("日本語") })
             }
-            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF17182D)), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("PHONE ACCESS & PERMISSIONS", color = Color(0xFFD6C4FF), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Text("Microphone: voice commands • Contacts: call/message lookup • Notifications: background status • Display over other apps: floating chat • Accessibility: visible screen context and explicit navigation • Device admin: lock phone only.", color = Color(0xFFB8B4D1), fontSize = 11.sp, lineHeight = 16.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(onClick = {
-                            val missing = buildList {
-                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
-                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.READ_CONTACTS)
-                                if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                            if (missing.isNotEmpty()) firstLaunchPermissions.launch(missing.toTypedArray()) else status = "Runtime permissions already granted."
-                        }, modifier = Modifier.weight(1f)) { Text("Runtime access", fontSize = 10.sp) }
-                        OutlinedButton(onClick = {
-                            try { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:" + context.packageName))) }
-                            catch (_: Exception) { status = "Open Android Settings and enable Display over other apps for Misha." }
-                        }, modifier = Modifier.weight(1f)) { Text("Floating overlay", fontSize = 10.sp) }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(onClick = {
-                            try { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                            catch (_: Exception) { status = "Open Android Settings → Accessibility to enable Misha Assistant Controls." }
-                        }, modifier = Modifier.weight(1f)) { Text("Accessibility", fontSize = 10.sp) }
-                        OutlinedButton(onClick = {
-                            val policy = context.getSystemService(android.content.Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-                            val admin = ComponentName(context, MishaDeviceAdminReceiver::class.java)
-                            if (policy.isAdminActive(admin)) status = "Device admin is already enabled. Misha will lock the phone only when you explicitly ask."
-                            else {
-                                context.startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
-                                    .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
-                                    .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Allow Misha to lock this phone only when you explicitly request it."))
-                            }
-                        }, modifier = Modifier.weight(1f)) { Text("Device admin access", fontSize = 10.sp) }
-                    }
-                    Text("Accessibility and overlay must be enabled separately in Android Settings. Allow only access you understand and want.", color = Color(0xFF8F8BAA), fontSize = 10.sp)
-                }
+            OutlinedButton(onClick = { showPermissionSetup = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Permissions & phone-control setup")
             }
-            Spacer(Modifier.height(10.dp))
             Spacer(Modifier.height(12.dp))
             Text("YOUR ASSISTANT", color = Color(0xFFB7A5FF), letterSpacing = 2.sp, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
