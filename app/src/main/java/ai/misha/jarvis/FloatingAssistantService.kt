@@ -65,7 +65,7 @@ class FloatingAssistantService : Service() {
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
-                MishaVoiceProfile.configure(tts ?: return@TextToSpeech, if (tag == "ja-JP") Locale.JAPANESE else Locale.US)
+                tts?.let { engine -> MishaVoiceProfile.configure(engine, if (tag == "ja-JP") Locale.JAPANESE else Locale.US) }
             }
         }
         if (Settings.canDrawOverlays(this)) attachBubble() else stopSelf()
