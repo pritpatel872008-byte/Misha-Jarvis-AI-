@@ -505,13 +505,22 @@ class FloatingAssistantService : Service() {
                                     val screen = MishaAccessibilityService.currentScreen(this)
                                     val expectedPackage = screen.contains("com.whatsapp", ignoreCase = true)
                                     val messageVisible = screen.contains(messageText.take(minOf(24, messageText.length)), ignoreCase = true)
-                                    if (expectedPackage && messageVisible) {
+                                    val recipientVisible = screen.contains(recipient, ignoreCase = true)
+                                    // Only tap Send when WhatsApp, the intended recipient and this message are all visible.
+                                    if (expectedPackage && messageVisible && recipientVisible) {
                                         val tapped = MishaAccessibilityService.perform("tap Send")
-                                        if (!tapped) android.os.Handler(mainLooper).postDelayed({ MishaAccessibilityService.perform("tap Send") }, 1000)
+                                        if (!tapped) android.os.Handler(mainLooper).postDelayed({
+                                            val retryScreen = MishaAccessibilityService.currentScreen(this)
+                                            if (retryScreen.contains("com.whatsapp", ignoreCase = true) &&
+                                                retryScreen.contains(recipient, ignoreCase = true) &&
+                                                retryScreen.contains(messageText.take(minOf(24, messageText.length)), ignoreCase = true)) {
+                                                MishaAccessibilityService.perform("tap Send")
+                                            }
+                                        }, 1200)
                                     }
-                                }, 3000)
-                                "Opened WhatsApp for $recipient and will try to press Send after the chat loads. Check the conversation to confirm delivery."
-                            } else "Opened WhatsApp for $recipient with your message ready. Enable Misha Assistant Controls in Accessibility settings for the optional send attempt."
+                                }, 3500)
+                                "Opening WhatsApp for $recipient. I'll send only if the intended recipient and message are visible; otherwise I'll leave it unsent to avoid messaging the wrong person."
+                            } else "WhatsApp opened with the message prepared, but automatic sending requires Misha Assistant Controls to be enabled in Android Accessibility settings."
                         }
                     }
                 }
@@ -649,7 +658,12 @@ class FloatingAssistantService : Service() {
                     candidates.add(Triple(display, number, score))
                 }
             }
-            candidates.minByOrNull { it.third }?.second
+            if (candidates.isEmpty()) return null
+            val bestScore = candidates.minOf { it.third }
+            val best = candidates.filter { it.third == bestScore }
+                .distinctBy { it.second.filter(Char::isDigit) }
+            // Never guess between two people: a wrong recipient is worse than asking.
+            if (best.size != 1 || bestScore >= 3) null else best.single().second
         } catch (_: Exception) { null }
     }
 
