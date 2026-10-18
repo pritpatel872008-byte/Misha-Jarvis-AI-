@@ -217,6 +217,11 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             when {
                 lower in listOf("flashlight on", "turn on flashlight", "switch on flashlight", "torch on", "turn on torch", "flashlight off", "turn off flashlight", "switch off flashlight", "torch off", "turn off torch") -> {
                     val turnOn = lower.endsWith(" on") || lower.startsWith("turn on ") || lower.startsWith("switch on ")
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        firstLaunchPermissions.launch(arrayOf(Manifest.permission.CAMERA))
+                        status = "Camera permission is not currently granted to Misha. Approve it, then repeat the flashlight command."
+                        input = ""; return
+                    }
                     val cameraManager = context.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
                     val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
                         cameraManager.getCameraCharacteristics(id).get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
@@ -542,15 +547,35 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
 }
 
 private fun findContactNumber(context: android.content.Context, name: String): String? {
-    if (name.isBlank()) return null
+    val wanted = name.trim().replace(Regex("\\s+"), " ").lowercase(Locale.ROOT)
+    if (wanted.isBlank()) return null
     return try {
+        val candidates = mutableListOf<Triple<String, String, Int>>()
         context.contentResolver.query(
             android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
-            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?",
+            arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
+            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ? COLLATE NOCASE",
             arrayOf("%$name%"),
-            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE NOCASE ASC"
-        )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0)?.takeIf { it.isNotBlank() } else null }
+            null
+        )?.use { cursor ->
+            val nameColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+            val numberColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
+            while (cursor.moveToNext()) {
+                val display = cursor.getString(nameColumn).orEmpty().trim()
+                val number = cursor.getString(numberColumn).orEmpty().trim()
+                val normalized = display.replace(Regex("\\s+"), " ").lowercase(Locale.ROOT)
+                if (number.isBlank()) continue
+                val score = when {
+                    normalized == wanted -> 0
+                    normalized.startsWith(wanted) -> 1
+                    normalized.contains(wanted) -> 2
+                    wanted.split(" ").all { it in normalized } -> 3
+                    else -> 4
+                }
+                candidates.add(Triple(display, number, score))
+            }
+        }
+        candidates.minByOrNull { it.third }?.second
     } catch (_: SecurityException) { null } catch (_: Exception) { null }
 }
 
