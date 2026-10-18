@@ -219,6 +219,20 @@ class FloatingAssistantService : Service() {
         }
         val scroll = ScrollView(this).apply { addView(transcript) }
         panel.addView(scroll, LinearLayout.LayoutParams(-1, dp(150)))
+        val quickTiles = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        quickTiles.addView(Button(this).apply {
+            text = "💜 Talk to me"
+            setOnClickListener { submit("I want to talk to you") }
+        }, LinearLayout.LayoutParams(0, dp(42), 1f))
+        quickTiles.addView(Button(this).apply {
+            text = "🔎 Web search"
+            setOnClickListener { input?.setText("Search the web for "); input?.setSelection(input?.text?.length ?: 0) }
+        }, LinearLayout.LayoutParams(0, dp(42), 1f))
+        panel.addView(quickTiles)
         input = EditText(this).apply {
             hint = "Type in English or Japanese…"; setHintTextColor(Color.GRAY); setTextColor(Color.WHITE)
             setSingleLine(false); minLines = 1; maxLines = 4
