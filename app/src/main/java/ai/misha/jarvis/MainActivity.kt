@@ -242,8 +242,6 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 OutlinedButton(onClick = { enableFloatingBubble(); status = if (Settings.canDrawOverlays(context)) "Floating Misha bubble enabled." else "Allow overlay permission, then tap this again." }, modifier = Modifier.weight(1f)) { Text("Floating Misha") }
             }
             OutlinedButton(onClick = { try { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }; status = "Select the installed system voice engine in Android settings." }, modifier = Modifier.fillMaxWidth()) { Text("Voice engine settings") }
-            /*
-            */
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Ask Misha anything…") }, shape = RoundedCornerShape(16.dp), trailingIcon = { TextButton(enabled = !busy, onClick = { send(input) }) { Text(if (busy) "…" else "Send") } }, maxLines = 3)
             Spacer(Modifier.height(12.dp))
