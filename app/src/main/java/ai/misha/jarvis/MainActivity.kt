@@ -546,41 +546,55 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
     }
 }
 
+private fun normalizeContactQuery(value: String): String {
+    var text = value.lowercase(Locale.ROOT)
+        .replace(Regex("[^\\p{L}\\p{N} ]+"), " ")
+        .replace(Regex("\\s+"), " ").trim()
+    // Remove spoken Hindi/Hinglish command particles around a contact name.
+    text = text.replace(Regex("^(?:ko|se|par|ka|ki|ke|keliye|ke liye)\\s+"), "")
+        .replace(Regex("\\s+(?:ko|se|par|keliye|ke liye|ko message)$"), "").trim()
+    return text
+}
+
+private fun contactNameScore(query: String, candidate: String): Int {
+    if (query.isBlank() || candidate.isBlank()) return 100
+    if (query == candidate) return 0
+    if (candidate.startsWith("$query ") || candidate.startsWith(query)) return 1
+    if (candidate.contains(query) || query.contains(candidate)) return 2
+    val qTokens = query.split(" ").filter { it.isNotBlank() }.toSet()
+    val cTokens = candidate.split(" ").filter { it.isNotBlank() }.toSet()
+    if (qTokens.isNotEmpty() && qTokens.all { token -> cTokens.any { it == token || it.startsWith(token) } }) return 2
+    return 100
+}
+
 private fun findContactNumber(context: android.content.Context, name: String): String? {
-    val wanted = name.trim().replace(Regex("\\s+"), " ").lowercase(Locale.ROOT)
+    val wanted = normalizeContactQuery(name)
     if (wanted.isBlank()) return null
     return try {
         val candidates = mutableListOf<Triple<String, String, Int>>()
         context.contentResolver.query(
             android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
-            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ? COLLATE NOCASE",
-            arrayOf("%$name%"),
-            null
+            null, null,
+            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE NOCASE ASC"
         )?.use { cursor ->
             val nameColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
             val numberColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
             while (cursor.moveToNext()) {
                 val display = cursor.getString(nameColumn).orEmpty().trim()
                 val number = cursor.getString(numberColumn).orEmpty().trim()
-                val normalized = display.replace(Regex("\\s+"), " ").lowercase(Locale.ROOT)
-                if (number.isBlank()) continue
-                val score = when {
-                    normalized == wanted -> 0
-                    normalized.startsWith(wanted) -> 1
-                    normalized.contains(wanted) -> 2
-                    wanted.split(" ").all { it in normalized } -> 3
-                    else -> 4
-                }
-                candidates.add(Triple(display, number, score))
+                if (display.isBlank() || number.isBlank()) continue
+                val normalized = normalizeContactQuery(display)
+                val score = contactNameScore(wanted, normalized)
+                if (score < 100) candidates.add(Triple(display, number, score))
             }
         }
         if (candidates.isEmpty()) return null
         val bestScore = candidates.minOf { it.third }
-        val best = candidates.filter { it.third == bestScore }
-            .distinctBy { it.second.filter(Char::isDigit) }
-        if (best.size != 1 || bestScore >= 3) null else best.single().second
+        val best = candidates.filter { it.third == bestScore }.distinctBy { it.second.filter(Char::isDigit) }
+        if (best.size != 1 || bestScore > 2) null else best.single().second
     } catch (_: SecurityException) { null } catch (_: Exception) { null }
+} catch (_: SecurityException) { null } catch (_: Exception) { null }
 }
 
 private fun startListening(recognizer: SpeechRecognizer?, context: android.content.Context, onResult: (String) -> Unit, onError: (String) -> Unit, languageTag: String = "en-US") {
