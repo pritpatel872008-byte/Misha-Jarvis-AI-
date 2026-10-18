@@ -219,6 +219,16 @@ class FloatingAssistantService : Service() {
     private fun submit(prompt: String) {
         val clean = prompt.trim()
         if (clean.isBlank() || busy) return
+        val deviceResult = handleDeviceCommand(clean)
+        if (deviceResult != null) {
+            transcript?.text = "You: $clean\\n\\nMisha: $deviceResult"
+            val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
+            tts?.let { engine ->
+                MishaVoiceProfile.configure(engine, if (tag == "ja-JP") Locale.JAPANESE else Locale.US)
+                engine.speak(deviceResult, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+            }
+            return
+        }
         busy = true; sendButton?.isEnabled = false; micButton?.isEnabled = false
         transcript?.text = "You: $clean\n\nMisha is thinking…"
         executor.execute {
@@ -248,6 +258,88 @@ class FloatingAssistantService : Service() {
                 }
             }
         }
+    }
+
+    private fun handleDeviceCommand(prompt: String): String? {
+        val lower = prompt.lowercase(Locale.ROOT)
+        return try {
+            when {
+                lower in listOf("go back", "press back", "back") ->
+                    if (MishaAccessibilityService.perform("back")) "Went back." else "Enable Misha Assistant Controls in Accessibility settings first."
+                lower in listOf("go home", "home screen", "go to home screen") ->
+                    if (MishaAccessibilityService.perform("home")) "Returned to Home." else "Enable Misha Assistant Controls in Accessibility settings first."
+                lower in listOf("show notifications", "open notifications") ->
+                    if (MishaAccessibilityService.perform("notifications")) "Opened notifications." else "Enable Misha Assistant Controls in Accessibility settings first."
+                lower in listOf("open quick settings", "show quick settings") ->
+                    if (MishaAccessibilityService.perform("quick settings")) "Opened Quick Settings." else "Enable Misha Assistant Controls in Accessibility settings first."
+                lower.startsWith("tap ") ->
+                    if (MishaAccessibilityService.perform(prompt)) "Tapped a visible item matching that text." else "No visible matching control was clicked. Check Accessibility permission and the exact text."
+                lower in listOf("what's on my screen", "what is on my screen", "read my screen") ->
+                    MishaAccessibilityService.currentScreen(this)
+                lower == "open youtube" || lower == "launch youtube" -> {
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    "Opening YouTube."
+                }
+                lower == "open instagram" || lower == "launch instagram" -> {
+                    val launch = packageManager.getLaunchIntentForPackage("com.instagram.android")
+                    if (launch != null) startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    else startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.instagram.com/")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    "Opening Instagram."
+                }
+                lower.startsWith("search ") || lower.startsWith("google ") -> {
+                    val query = prompt.substringAfter(' ').trim()
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode(query))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    "Opening Google search for $query."
+                }
+                lower.contains("weather") -> {
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    "Opening live weather."
+                }
+                lower.startsWith("open ") || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
+                    val appName = when {
+                        lower.startsWith("open ") -> prompt.substringAfter(' ').trim()
+                        lower.startsWith("launch ") -> prompt.substringAfter(' ').trim()
+                        else -> prompt.substringAfter("start app ").trim()
+                    }
+                    val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                    val match = packageManager.queryIntentActivities(launcherIntent, 0).firstOrNull {
+                        it.loadLabel(packageManager).toString().contains(appName, ignoreCase = true)
+                    }
+                    if (match == null || appName.isBlank()) "I couldn't find an installed app matching '$appName'."
+                    else {
+                        startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                            .setClassName(match.activityInfo.packageName, match.activityInfo.name)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        "Opening ${match.loadLabel(packageManager)}."
+                    }
+                }
+                lower.startsWith("call ") || lower.startsWith("dial ") -> {
+                    val target = prompt.substringAfter(' ').trim()
+                    val number = if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED)
+                        findContactNumber(target) else null
+                    val dialTarget = number ?: target.takeIf { it.any(Char::isDigit) }
+                    if (dialTarget == null) "I couldn't find that saved contact. Allow Contacts permission in Misha, then try the exact name."
+                    else {
+                        startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + android.net.Uri.encode(dialTarget))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        "Found the number and opened the dialer. Review it and tap Call to confirm."
+                    }
+                }
+                else -> null
+            }
+        } catch (_: Exception) { "That phone action couldn't be opened. Check the required permission and try again." }
+    }
+
+    private fun findContactNumber(name: String): String? {
+        if (name.isBlank()) return null
+        return try {
+            contentResolver.query(
+                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
+                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?",
+                arrayOf("%$name%"),
+                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE NOCASE ASC"
+            )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0)?.takeIf { it.isNotBlank() } else null }
+        } catch (_: Exception) { null }
     }
 
     private fun parseReply(body: String): String = try {
