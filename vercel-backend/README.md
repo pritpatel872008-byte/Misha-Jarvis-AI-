@@ -15,9 +15,9 @@ Response:
 ## Required configuration
 
 In the Vercel project Environment Variables, add **one** server-side secret:
-- `ANTHROPIC_API_KEY` for Claude (preferred), or
-- `GEMINI_API_KEY` for Google Gemini.
+- `GEMINI_API_KEY` for Google Gemini (used for educational and technical questions when configured).
+- `ANTHROPIC_API_KEY` for Claude as the conversational fallback, or as the primary provider when Gemini is not configured.
 
-Optional: `ANTHROPIC_MODEL` or `GEMINI_MODEL`. Never prefix provider keys with `NEXT_PUBLIC_` or `VITE_`, and never put them in the Android app.
+Optional: `ANTHROPIC_MODEL` or `GEMINI_MODEL`. The chat handler loads the Misha emotional-conversation guidance from `api/ai/misha_emotions.py`. Never prefix provider keys with `NEXT_PUBLIC_` or `VITE_`, and never put them in the Android app.
 
 Deploy this directory as the Vercel project's Root Directory. The API returns a real configuration error if no provider key exists; it never returns a fake answer.
