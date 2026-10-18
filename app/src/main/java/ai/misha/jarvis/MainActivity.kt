@@ -594,7 +594,6 @@ private fun findContactNumber(context: android.content.Context, name: String): S
         val best = candidates.filter { it.third == bestScore }.distinctBy { it.second.filter(Char::isDigit) }
         if (best.size != 1 || bestScore > 2) null else best.single().second
     } catch (_: SecurityException) { null } catch (_: Exception) { null }
-} catch (_: SecurityException) { null } catch (_: Exception) { null }
 }
 
 private fun startListening(recognizer: SpeechRecognizer?, context: android.content.Context, onResult: (String) -> Unit, onError: (String) -> Unit, languageTag: String = "en-US") {
