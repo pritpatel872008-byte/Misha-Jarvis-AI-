@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -188,6 +189,23 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 }
             }
             OutlinedButton(onClick = { openYouTube(); status = "Opening YouTube." }, modifier = Modifier.fillMaxWidth()) { Text("Open YouTube") }
+            OutlinedButton(
+                onClick = {
+                    if (Settings.canDrawOverlays(context)) {
+                        try {
+                            val serviceIntent = Intent(context, FloatingAssistantService::class.java)
+                            if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(serviceIntent) else context.startService(serviceIntent)
+                            status = "Floating assistant started. Use the notification's Stop action to dismiss it."
+                        } catch (_: Exception) { status = "Couldn't start the floating assistant. Check overlay permission and try again." }
+                    } else {
+                        status = "Allow Display over other apps, return to Misha, then tap Floating Assistant again."
+                        try {
+                            context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:" + context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (_: Exception) { status = "Open Android Settings and allow Display over other apps for Misha." }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Enable Floating Assistant") }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Ask Misha anything…") }, shape = RoundedCornerShape(16.dp), trailingIcon = { TextButton(enabled = !busy, onClick = { send(input) }) { Text(if (busy) "…" else "Send") } }, maxLines = 3)
             Spacer(Modifier.height(12.dp))
