@@ -367,6 +367,10 @@ class FloatingAssistantService : Service() {
             } else when {
                 lower in listOf("flashlight on", "turn on flashlight", "switch on flashlight", "torch on", "turn on torch", "flashlight off", "turn off flashlight", "switch off flashlight", "torch off", "turn off torch") -> {
                     val turnOn = lower.endsWith(" on") || lower.startsWith("turn on ") || lower.startsWith("switch on ")
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        return "Android reports Camera permission is denied for Misha. Open App permissions, allow Camera, then repeat the flashlight command."
+                    }
                     val cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
                     val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
                         cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
@@ -493,7 +497,12 @@ class FloatingAssistantService : Service() {
                 }
                 else -> null
             }
-        } catch (_: Exception) { "That phone action couldn't be opened. Check the required permission and try again." }
+        } catch (error: SecurityException) {
+            if (lower.contains("flashlight") || lower.contains("torch")) {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                "Android blocked camera/flashlight access. Recheck Misha → App info → Permissions → Camera, and ensure Camera access is enabled in Quick Settings."
+            } else "Android blocked this phone action. Recheck the required permission in Misha's App info."
+        } catch (error: Exception) { "That phone action failed (${error.javaClass.simpleName}). Check Misha's app permissions and try again." }
     }
 
     private fun openSystemSettings(command: String): String {
@@ -585,15 +594,35 @@ class FloatingAssistantService : Service() {
     }
 
     private fun findContactNumber(name: String): String? {
-        if (name.isBlank()) return null
+        val wanted = name.trim().replace(Regex("\\s+"), " ").lowercase(Locale.ROOT)
+        if (wanted.isBlank()) return null
         return try {
+            val candidates = mutableListOf<Triple<String, String, Int>>()
             contentResolver.query(
                 android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
-                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ?",
+                arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
+                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " LIKE ? COLLATE NOCASE",
                 arrayOf("%$name%"),
-                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE NOCASE ASC"
-            )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0)?.takeIf { it.isNotBlank() } else null }
+                null
+            )?.use { cursor ->
+                val nameColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numberColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
+                while (cursor.moveToNext()) {
+                    val display = cursor.getString(nameColumn).orEmpty().trim()
+                    val number = cursor.getString(numberColumn).orEmpty().trim()
+                    val normalized = display.replace(Regex("\\s+"), " ").lowercase(Locale.ROOT)
+                    if (number.isBlank()) continue
+                    val score = when {
+                        normalized == wanted -> 0
+                        normalized.startsWith(wanted) -> 1
+                        normalized.contains(wanted) -> 2
+                        wanted.split(" ").all { it in normalized } -> 3
+                        else -> 4
+                    }
+                    candidates.add(Triple(display, number, score))
+                }
+            }
+            candidates.minByOrNull { it.third }?.second
         } catch (_: Exception) { null }
     }
 
