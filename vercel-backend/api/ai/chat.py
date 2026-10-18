@@ -58,7 +58,7 @@ class handler(BaseHTTPRequestHandler):
             if not anthropic_key and not google_key:
                 return respond(self, 503, {"error": "AI provider is not configured. Add ANTHROPIC_API_KEY or GEMINI_API_KEY in Vercel Environment Variables."})
 
-            latest_user_text = " ".join(m["content"] for m in safe_messages if m["role"] == "user")[-3000:].lower()
+            latest_user_text = next((m["content"] for m in reversed(safe_messages) if m["role"] == "user"), "")[-3000:].lower()
             educational_request = any(term in latest_user_text for term in (
                 "fiber optic", "optical fibre", "optical fiber", "explain", "what is", "what are",
                 "how does", "how do", "information about", "tell me about", "technical", "definition",
