@@ -166,7 +166,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 val app = appName.lowercase(Locale.ROOT)
                 val encoded = android.net.Uri.encode(query)
                 val target = when {
-                    app.contains("youtube") -> "https://www.youtube.com/results?search_query=$encoded"
+                    app.contains("youtube") -> "https://www.youtube.com/results?search_query=$encoded&sp=EgIQAg%3D%3D"
                     app.contains("instagram") -> "https://www.instagram.com/explore/search/keyword/?q=$encoded"
                     app.contains("chrome") -> "https://www.google.com/search?q=$encoded"
                     else -> null
