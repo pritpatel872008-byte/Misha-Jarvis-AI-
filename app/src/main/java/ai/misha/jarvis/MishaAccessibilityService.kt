@@ -120,11 +120,29 @@ class MishaAccessibilityService : AccessibilityService() {
     private fun clickVisibleText(target: String): Boolean {
         val root = rootInActiveWindow ?: return false
         return try {
-            val nodes = root.findAccessibilityNodeInfosByText(target)
-            val node = nodes?.firstOrNull { it.isVisibleToUser && it.isClickable }
-                ?: nodes?.firstOrNull { it.isVisibleToUser }
-            node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+            val nodes = root.findAccessibilityNodeInfosByText(target).orEmpty()
+            val exact = nodes.firstOrNull {
+                it.isVisibleToUser && (
+                    it.text?.toString()?.trim()?.equals(target, ignoreCase = true) == true ||
+                    it.contentDescription?.toString()?.trim()?.equals(target, ignoreCase = true) == true
+                )
+            }
+            val candidate = exact ?: nodes.firstOrNull { it.isVisibleToUser }
+            var clickable: AccessibilityNodeInfo? = candidate
+            var depth = 0
+            while (clickable != null && !clickable.isClickable && depth++ < 8) {
+                val parent = clickable.parent
+                if (clickable !== candidate) clickable.recycle()
+                clickable = parent
+            }
+            val success = clickable?.takeIf { it.isVisibleToUser && it.isClickable }
+                ?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+            if (clickable != null && clickable !== candidate) clickable.recycle()
+            success
         } catch (_: Exception) { false }
-        finally { root.recycle() }
+        finally {
+            nodes.forEach { try { it.recycle() } catch (_: Exception) {} }
+            root.recycle()
+        }
     }
 }
