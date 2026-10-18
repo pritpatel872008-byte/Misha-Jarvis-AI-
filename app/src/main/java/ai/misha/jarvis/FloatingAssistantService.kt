@@ -424,7 +424,7 @@ class FloatingAssistantService : Service() {
                     "Opening Instagram."
                 }
                 lower.contains("weather") -> { openSearch("current weather near me", null); "Searching the web for current weather." }
-                (lower.startsWith("open ") && !lower.startsWith("open whatsapp and send message ")) || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
+                (lower.startsWith("open ") && !lower.startsWith("open whatsapp and send message ") && !lower.startsWith("open whatsapp and message ") && !lower.startsWith("open whatsapp and text ")) || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
                     val appName = when {
                         lower.startsWith("open ") -> clean.substringAfter("open ").trim()
                         lower.startsWith("launch ") -> clean.substringAfter("launch ").trim()
@@ -438,10 +438,8 @@ class FloatingAssistantService : Service() {
                         "Opening ${match.loadLabel(packageManager)}."
                     }
                 }
-                lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") || lower.startsWith("open whatsapp and send message ") -> {
-                    val openAndSend = lower.startsWith("open whatsapp and send message")
-                    val request = if (openAndSend) clean.replaceFirst(Regex("^open\\s+whatsapp\\s+and\\s+send\\s+message\\s*", RegexOption.IGNORE_CASE), "")
-                        else clean.replaceFirst(Regex("^(?:send\\s+)?whatsapp\\s+", RegexOption.IGNORE_CASE), "")
+                lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") || lower.startsWith("open whatsapp and send message ") || lower.startsWith("open whatsapp and message ") || lower.startsWith("open whatsapp and text ") || lower.startsWith("message on whatsapp ") || lower.startsWith("text on whatsapp ") -> {
+                    val request = clean.replaceFirst(Regex("^(?:(?:open\\s+)?whatsapp\\s+and\\s+(?:send\\s+)?(?:message|text)|(?:message|text)\\s+on\\s+whatsapp|(?:send\\s+)?whatsapp)\\s*", RegexOption.IGNORE_CASE), "")
                     val recipientAndMessage: Pair<String, String>? = when {
                         Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
                             val match = Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
@@ -474,10 +472,14 @@ class FloatingAssistantService : Service() {
                             if (MishaAccessibilityService.isEnabled()) {
                                 android.os.Handler(mainLooper).postDelayed({
                                     val screen = MishaAccessibilityService.currentScreen(this)
-                                    val sameRecipientAndText = screen.contains(recipient, ignoreCase = true) && screen.contains(messageText.take(24), ignoreCase = true)
-                                    if (sameRecipientAndText) MishaAccessibilityService.perform("tap Send")
-                                }, 1800)
-                                "Opened WhatsApp for $recipient. I'll attempt Send only if the visible screen matches the recipient and message; check WhatsApp to confirm."
+                                    val expectedPackage = screen.contains("com.whatsapp", ignoreCase = true)
+                                    val messageVisible = screen.contains(messageText.take(minOf(24, messageText.length)), ignoreCase = true)
+                                    if (expectedPackage && messageVisible) {
+                                        val tapped = MishaAccessibilityService.perform("tap Send")
+                                        if (!tapped) android.os.Handler(mainLooper).postDelayed({ MishaAccessibilityService.perform("tap Send") }, 1000)
+                                    }
+                                }, 3000)
+                                "Opened WhatsApp for $recipient and will try to press Send after the chat loads. Check the conversation to confirm delivery."
                             } else "Opened WhatsApp for $recipient with your message ready. Enable Misha Assistant Controls in Accessibility settings for the optional send attempt."
                         }
                     }
@@ -487,7 +489,7 @@ class FloatingAssistantService : Service() {
                     val number = if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) findContactNumber(target) else null
                     val dialTarget = number ?: target.takeIf { it.any(Char::isDigit) }
                     if (dialTarget == null) "I couldn't find that saved contact. Allow Contacts permission in Misha, then try the exact name."
-                    else { startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + android.net.Uri.encode(dialTarget))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Found the number and opened the dialer. Review it and tap Call to confirm." }
+                    else { val uri = android.net.Uri.parse("tel:" + android.net.Uri.encode(dialTarget)); if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) { startActivity(Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Calling $target now." } else { startActivity(Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Phone permission is not granted, so I opened the dialer. Allow Phone permission in Android Settings to place calls by voice." } }
                 }
                 else -> null
             }
