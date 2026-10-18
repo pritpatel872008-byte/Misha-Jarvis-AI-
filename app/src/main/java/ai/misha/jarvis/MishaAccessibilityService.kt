@@ -18,13 +18,34 @@ class MishaAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val packageName = event.packageName?.toString().orEmpty()
-        val text = event.text?.joinToString(" ") { it.toString() }.orEmpty()
-        if (packageName.isNotBlank() || text.isNotBlank()) {
+        val visible = StringBuilder()
+        val root = rootInActiveWindow
+        if (root != null) {
+            try { collectVisibleText(root, visible, 0) } catch (_: Exception) { }
+            finally { root.recycle() }
+        }
+        if (visible.isEmpty()) event.text?.forEach { value ->
+            val item = value.toString().trim()
+            if (item.isNotBlank()) visible.append(item).append(' ')
+        }
+        if (packageName.isNotBlank() || visible.isNotBlank()) {
             getSharedPreferences("misha_screen_context", MODE_PRIVATE).edit()
                 .putString("package", packageName)
-                .putString("text", text.take(3000))
+                .putString("text", visible.toString().trim().take(3000))
                 .putLong("updated_at", System.currentTimeMillis())
                 .apply()
+        }
+    }
+
+    private fun collectVisibleText(node: AccessibilityNodeInfo, output: StringBuilder, depth: Int) {
+        if (depth > 20 || output.length >= 3000 || !node.isVisibleToUser) return
+        val label = (node.text?.toString() ?: node.contentDescription?.toString()).orEmpty().trim()
+        if (label.isNotBlank()) output.append(label).append(" | ")
+        for (index in 0 until node.childCount) {
+            if (output.length >= 3000) break
+            val child = node.getChild(index) ?: continue
+            try { collectVisibleText(child, output, depth + 1) } catch (_: Exception) { }
+            finally { child.recycle() }
         }
     }
 
