@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private fun openYouTube() { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/"))) }
     private fun setVoiceLanguage(languageTag: String) {
         val engine = tts ?: return
+        getSharedPreferences("misha_voice", MODE_PRIVATE).edit().putString("language", languageTag).apply()
         val result = engine.setLanguage(Locale.forLanguageTag(languageTag))
         if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
             speak("That voice is not installed. Open Android Text-to-Speech settings and install a compatible voice.")
@@ -66,7 +67,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val result = tts?.setLanguage(Locale.forLanguageTag("en-US"))
+            val languageTag = getSharedPreferences("misha_voice", MODE_PRIVATE).getString("language", "en-US") ?: "en-US"
+            val result = tts?.setLanguage(Locale.forLanguageTag(languageTag))
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) tts?.language = Locale.getDefault()
         }
     }
