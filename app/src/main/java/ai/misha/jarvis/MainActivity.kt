@@ -226,7 +226,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode("site:instagram.com $query"))))
                     status = "Searching public Instagram results on the web."; input = ""; return
                 }
-                lower.startsWith("open ") || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
+                (lower.startsWith("open ") && !lower.startsWith("open whatsapp and send message ")) || lower.startsWith("launch ") || lower.startsWith("start app ") -> {
                     val appName = when {
                         lower.startsWith("open ") -> prompt.substringAfter(' ').trim()
                         lower.startsWith("launch ") -> prompt.substringAfter(' ').trim()
@@ -292,25 +292,53 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     status = MishaAccessibilityService.currentScreen(context)
                     speak(status); input = ""; return
                 }
-                lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") -> {
-                    val request = if (lower.startsWith("send whatsapp ")) prompt.replaceFirst(Regex("^send\\s+whatsapp\\s+", RegexOption.IGNORE_CASE), "") else prompt.replaceFirst(Regex("^whatsapp\\s+", RegexOption.IGNORE_CASE), "")
-                    val parts = request.split(Regex("\\s+message\\s+", RegexOption.IGNORE_CASE), limit = 2)
-                    if (parts.size < 2 || parts[0].isBlank() || parts[1].isBlank()) {
-                        status = "Use: WhatsApp CONTACT NAME message your message text."
+                lower.startsWith("whatsapp ") || lower.startsWith("send whatsapp ") || lower.startsWith("open whatsapp and send message ") -> {
+                    val openAndSend = lower.startsWith("open whatsapp and send message ")
+                    val request = if (openAndSend) prompt.replaceFirst(Regex("^open\\s+whatsapp\\s+and\\s+send\\s+message\\s*", RegexOption.IGNORE_CASE), "")
+                        else prompt.replaceFirst(Regex("^(?:send\\s+)?whatsapp\\s+", RegexOption.IGNORE_CASE), "")
+                    val parsed: Pair<String, String>? = when {
+                        Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
+                            val m = Regex("^to\\s+(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
+                            m.groupValues[1].trim() to m.groupValues[2].trim()
+                        }
+                        Regex("^(.+)\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
+                            val m = Regex("^(.+)\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
+                            m.groupValues[2].trim() to m.groupValues[1].trim()
+                        }
+                        Regex("^(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request) != null -> {
+                            val m = Regex("^(.+?)\\s+message\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(request)!!
+                            m.groupValues[1].trim() to m.groupValues[2].trim()
+                        }
+                        else -> null
+                    }
+                    if (parsed == null || parsed.first.isBlank() || parsed.second.isBlank()) {
+                        status = "Say: WhatsApp to CONTACT NAME message TEXT, or open WhatsApp and send message TEXT to CONTACT NAME."
                         input = ""; return
                     }
-                    val contactName = parts[0].trim()
-                    val messageText = parts[1].trim()
-                    val phone = if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) findContactNumber(context, contactName) else null
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+                        status = "Allow Contacts permission in Android Settings, then retry the WhatsApp command."
+                        input = ""; return
+                    }
+                    val contactName = parsed.first
+                    val messageText = parsed.second
+                    val phone = findContactNumber(context, contactName)
                     if (phone == null) {
-                        status = "I couldn't find that saved contact. Check Contacts permission and use the exact contact name."
+                        status = "I couldn't find a saved contact matching '$contactName'. Check the exact name."
                         input = ""; return
                     }
                     val digits = phone.filter(Char::isDigit)
                     val international = if (digits.startsWith("91") || digits.length > 10) digits else "91$digits"
                     val uri = android.net.Uri.parse("https://wa.me/$international?text=" + android.net.Uri.encode(messageText))
-                    context.startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage("com.whatsapp"))
-                    status = "WhatsApp chat opened with your message ready. Review it and tap Send."
+                    context.startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage("com.whatsapp").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    if (MishaAccessibilityService.isEnabled()) {
+                        android.os.Handler(context.mainLooper).postDelayed({
+                            val screen = MishaAccessibilityService.currentScreen(context)
+                            if (screen.contains(contactName, ignoreCase = true) && screen.contains(messageText.take(24), ignoreCase = true)) {
+                                MishaAccessibilityService.perform("tap Send")
+                            }
+                        }, 1800)
+                        status = "Opened WhatsApp for $contactName. I'll attempt Send only if the visible screen matches the recipient and message; check WhatsApp to confirm."
+                    } else status = "Opened WhatsApp for $contactName with the message ready. Enable Misha Assistant Controls in Accessibility settings for the optional send attempt."
                     input = ""; return
                 }
                 lower.contains("whatsapp") -> {
