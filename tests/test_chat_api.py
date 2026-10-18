@@ -139,5 +139,24 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(result["provider_status"], 400)
 
 
+    @patch.object(api, "urlopen")
+    def test_gemini_timeout_falls_back_to_anthropic(self, mock_urlopen):
+        os.environ["GEMINI_API_KEY"] = "gemini-test-key"
+        os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
+        mock_urlopen.side_effect = [
+            TimeoutError("Gemini read timed out"),
+            ProviderResponse({"content": [{"type": "text", "text": "Fallback reply"}]}),
+        ]
+        body = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
+        h = FakeHandler(body, {"Content-Length": str(len(body))})
+        h.do_POST()
+        status, result = h.result()
+        self.assertEqual(status, 200)
+        self.assertEqual(result["reply"], "Fallback reply")
+        self.assertEqual(mock_urlopen.call_count, 2)
+        self.assertIn("generativelanguage.googleapis.com", mock_urlopen.call_args_list[0].args[0].full_url)
+        self.assertIn("api.anthropic.com", mock_urlopen.call_args_list[1].args[0].full_url)
+
+
 if __name__ == "__main__":
     unittest.main()
