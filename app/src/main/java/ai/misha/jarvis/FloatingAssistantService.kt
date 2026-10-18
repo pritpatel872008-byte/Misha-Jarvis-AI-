@@ -19,6 +19,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -89,7 +90,7 @@ class FloatingAssistantService : Service() {
     } catch (_: Exception) { false }
 
     private fun startWakeWordDetector() {
-        if (wakeWordActive || !wakeWordModelAvailable || popup != null) return
+        if (wakeWordActive || !wakeWordModelAvailable || busy) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         try {
             wakeWordDetector?.release()
@@ -238,9 +239,11 @@ class FloatingAssistantService : Service() {
         try { popup?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         popup = null; popupParams = null; input = null; transcript = null; sendButton = null; micButton = null
         try { recognizer?.cancel() } catch (_: Exception) {}
+        startWakeWordDetector()
     }
 
     private fun listenOnce() {
+        stopWakeWordDetector()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             transcript?.text = "Microphone permission is missing. Open Misha and allow Microphone in Android Settings."; return
         }
@@ -254,7 +257,7 @@ class FloatingAssistantService : Service() {
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
-            override fun onError(error: Int) { transcript?.text = "Voice recognition failed ($error). Please try again or type."; micButton?.isEnabled = true }
+            override fun onError(error: Int) { transcript?.text = "Voice recognition failed ($error). Please try again or type."; micButton?.isEnabled = true; startWakeWordDetector() }
             override fun onResults(results: Bundle?) {
                 val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                 micButton?.isEnabled = true
@@ -273,6 +276,14 @@ class FloatingAssistantService : Service() {
         try { recognizer?.startListening(intent) } catch (_: Exception) { micButton?.isEnabled = true; transcript?.text = "Couldn't start speech recognition. Try again." }
     }
 
+    private fun speakAndResumeWakeWord(engine: TextToSpeech, text: String) {
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onError(utteranceId: String?) { android.os.Handler(mainLooper).post { startWakeWordDetector() } }
+            override fun onDone(utteranceId: String?) { android.os.Handler(mainLooper).post { startWakeWordDetector() } }
+        })
+        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+    }
     private fun submit(prompt: String) {
         val clean = prompt.trim()
         if (clean.isBlank() || busy) return
@@ -282,7 +293,7 @@ class FloatingAssistantService : Service() {
             val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
             tts?.let { engine ->
                 MishaVoiceProfile.configure(engine, if (tag == "ja-JP") Locale.JAPANESE else Locale.US)
-                engine.speak(deviceResult, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+                speakAndResumeWakeWord(engine, deviceResult)
             }
             return
         }
@@ -318,7 +329,7 @@ class FloatingAssistantService : Service() {
                 val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
                 tts?.let { engine ->
                     MishaVoiceProfile.configure(engine, if (tag == "ja-JP") Locale.JAPANESE else Locale.US)
-                    engine.speak(result, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+                    speakAndResumeWakeWord(engine, result)
                 }
             }
         }
