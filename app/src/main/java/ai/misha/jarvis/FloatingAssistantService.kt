@@ -75,6 +75,7 @@ class FloatingAssistantService : Service() {
             }
         }
         wakeWordModelAvailable = hasHeyMishaModel()
+        updateNotificationForWakeWord()
         if (Settings.canDrawOverlays(this)) {
             attachBubble()
             if (wakeWordModelAvailable && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startWakeWordDetector()
@@ -575,6 +576,9 @@ class FloatingAssistantService : Service() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
+        stopWakeWordDetector()
+        try { wakeWordDetector?.release() } catch (_: Exception) {}
+        wakeWordDetector = null
         hidePopup()
         try { bubble?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         bubble = null
@@ -591,5 +595,6 @@ class FloatingAssistantService : Service() {
         const val ACTION_STOP = "ai.misha.jarvis.action.STOP_FLOATING"
         private const val CHANNEL_ID = "misha_floating_assistant"
         private const val NOTIFICATION_ID = 7401
+        private const val HEY_MISHA_MODEL_ASSET = "hey_misha.onnx"
     }
 }
