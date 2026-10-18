@@ -169,7 +169,7 @@ class FloatingAssistantService : Service() {
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                    else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
         val params = WindowManager.LayoutParams((resources.displayMetrics.widthPixels - dp(28)).coerceAtLeast(dp(280)),
-            dp(350), type, WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,
+            dp(350), type, WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT).apply { gravity = Gravity.CENTER }
         try {
             windowManager?.addView(panel, params); popup = panel; popupParams = params
