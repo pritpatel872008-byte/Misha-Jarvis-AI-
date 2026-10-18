@@ -119,8 +119,9 @@ class MishaAccessibilityService : AccessibilityService() {
 
     private fun clickVisibleText(target: String): Boolean {
         val root = rootInActiveWindow ?: return false
+        var nodes: List<AccessibilityNodeInfo> = emptyList()
         return try {
-            val nodes = root.findAccessibilityNodeInfosByText(target).orEmpty()
+            nodes = root.findAccessibilityNodeInfosByText(target).orEmpty()
             val exact = nodes.firstOrNull {
                 it.isVisibleToUser && (
                     it.text?.toString()?.trim()?.equals(target, ignoreCase = true) == true ||
