@@ -65,7 +65,7 @@ class FloatingAssistantService : Service() {
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
-                tts?.language = if (tag == "ja-JP") Locale.JAPANESE else Locale.US
+                MishaVoiceProfile.configure(tts ?: return@TextToSpeech, if (tag == "ja-JP") Locale.JAPANESE else Locale.US)
             }
         }
         if (Settings.canDrawOverlays(this)) attachBubble() else stopSelf()
@@ -242,8 +242,10 @@ class FloatingAssistantService : Service() {
                 busy = false; sendButton?.isEnabled = true; micButton?.isEnabled = true
                 transcript?.text = "You: $clean\n\nMisha: $result"
                 val tag = getSharedPreferences("misha_settings", MODE_PRIVATE).getString("language", "en-US")
-                tts?.language = if (tag == "ja-JP") Locale.JAPANESE else Locale.US
-                tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+                tts?.let { engine ->
+                    MishaVoiceProfile.configure(engine, if (tag == "ja-JP") Locale.JAPANESE else Locale.US)
+                    engine.speak(result, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+                }
             }
         }
     }
