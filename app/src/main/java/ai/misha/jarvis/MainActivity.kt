@@ -157,6 +157,63 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         if (prompt.isEmpty() || busy) return
         val lower = prompt.lowercase(Locale.ROOT)
         try {
+            val compoundSearch = Regex("^(?:please\\s+)?(?:open|launch|start)\\s+(.+?)\\s+and\\s+(?:search(?:\\s+for)?|look\\s+up)\\s+(.+)$", RegexOption.IGNORE_CASE).find(prompt)
+            if (compoundSearch != null) {
+                val appName = compoundSearch.groupValues[1].trim()
+                var query = compoundSearch.groupValues[2].trim()
+                val followRequested = Regex("\\s+and\\s+(?:follow|subscribe)(?:\\s+(?:the\\s+)?(?:account|channel|profile))?\\s*$", RegexOption.IGNORE_CASE).containsMatchIn(query)
+                query = query.replace(Regex("\\s+and\\s+(?:follow|subscribe)(?:\\s+(?:the\\s+)?(?:account|channel|profile))?\\s*$", RegexOption.IGNORE_CASE), "").trim()
+                val app = appName.lowercase(Locale.ROOT)
+                val encoded = android.net.Uri.encode(query)
+                val target = when {
+                    app.contains("youtube") -> "https://www.youtube.com/results?search_query=$encoded"
+                    app.contains("instagram") -> "https://www.instagram.com/explore/search/keyword/?q=$encoded"
+                    app.contains("chrome") -> "https://www.google.com/search?q=$encoded"
+                    else -> null
+                }
+                if (target != null) {
+                    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(target))
+                    val pkg = when {
+                        app.contains("youtube") -> "com.google.android.youtube"
+                        app.contains("instagram") -> "com.instagram.android"
+                        app.contains("chrome") -> "com.android.chrome"
+                        else -> null
+                    }
+                    if (pkg != null && context.packageManager.getLaunchIntentForPackage(pkg) != null) intent.setPackage(pkg)
+                    context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } else {
+                    val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                    val match = context.packageManager.queryIntentActivities(launcher, 0).firstOrNull {
+                        it.loadLabel(context.packageManager).toString().contains(appName, ignoreCase = true)
+                    }
+                    if (match == null) {
+                        status = "I couldn't find an installed app matching '$appName'."
+                        input = ""; return
+                    }
+                    context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                        .setClassName(match.activityInfo.packageName, match.activityInfo.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    if (MishaAccessibilityService.isEnabled()) android.os.Handler(context.mainLooper).postDelayed({
+                        if (MishaAccessibilityService.perform("tap Search")) {
+                            android.os.Handler(context.mainLooper).postDelayed({
+                                MishaAccessibilityService.perform("type $query")
+                                MishaAccessibilityService.perform("enter")
+                            }, 500)
+                        }
+                    }, 1400)
+                }
+                if (followRequested && MishaAccessibilityService.isEnabled()) {
+                    android.os.Handler(context.mainLooper).postDelayed({
+                        val selected = MishaAccessibilityService.perform("tap $query")
+                        android.os.Handler(context.mainLooper).postDelayed({
+                            val followed = MishaAccessibilityService.perform("tap Follow") || MishaAccessibilityService.perform("tap Subscribe")
+                            if (selected && followed) speak("I tapped the visible Follow or Subscribe control. Please check the account state.")
+                        }, 1200)
+                    }, 1800)
+                    status = "Searching for '$query' and attempting the visible Follow/Subscribe action. Check the account state afterward."
+                } else if (followRequested) status = "Search opened for '$query'. Enable Misha Assistant Controls in Accessibility settings to allow follow/subscribe automation."
+                else status = "Opening $appName and searching for '$query'."
+                input = ""; return
+            }
             when {
                 lower == "open youtube" || lower.startsWith("open youtube") -> { openYouTube(); status = "Opening YouTube."; input = ""; return }
                 lower == "open instagram" || lower == "launch instagram" || lower == "start instagram" -> {
@@ -189,12 +246,16 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     } else status = "I couldn't find an installed app matching '$appName'."
                     input = ""; return
                 }
-                lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/"))); status = "Opening live weather."; input = ""; return }
-                lower.startsWith("search ") || lower.startsWith("google ") -> {
-                    val query = prompt.substringAfter(' ').trim()
-                    context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode(query))))
-                    status = "Opening Google search."; input = ""; return
+                lower.startsWith("search ") || lower.startsWith("google ") || lower.startsWith("look up ") -> {
+                    val query = when {
+                        lower.startsWith("search ") -> prompt.substringAfter("search ").replaceFirst(Regex("^for\\s+", RegexOption.IGNORE_CASE), "").trim()
+                        lower.startsWith("google ") -> prompt.substringAfter("google ").trim()
+                        else -> prompt.substringAfter("look up ").trim()
+                    }
+                    context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode(query))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    status = "Searching the web for '$query'."; input = ""; return
                 }
+                lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode("current weather near me"))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); status = "Searching the web for current weather."; input = ""; return }
                 lower.startsWith("call ") || lower.startsWith("dial ") -> {
                     val target = prompt.substringAfter(' ').trim()
                     val contactNumber = if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) findContactNumber(context, target) else null
