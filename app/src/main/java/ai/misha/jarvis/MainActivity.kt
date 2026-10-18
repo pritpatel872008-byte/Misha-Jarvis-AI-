@@ -309,7 +309,16 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                             try { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
                             catch (_: Exception) { status = "Open Android Settings → Accessibility to enable Misha Assistant Controls." }
                         }, modifier = Modifier.weight(1f)) { Text("Accessibility", fontSize = 10.sp) }
-                        OutlinedButton(onClick = { lockPhone() }, modifier = Modifier.weight(1f)) { Text("Device admin / lock", fontSize = 10.sp) }
+                        OutlinedButton(onClick = {
+                            val policy = context.getSystemService(android.content.Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                            val admin = ComponentName(context, MishaDeviceAdminReceiver::class.java)
+                            if (policy.isAdminActive(admin)) status = "Device admin is already enabled. Misha will lock the phone only when you explicitly ask."
+                            else {
+                                context.startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                                    .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+                                    .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Allow Misha to lock this phone only when you explicitly request it."))
+                            }
+                        }, modifier = Modifier.weight(1f)) { Text("Device admin access", fontSize = 10.sp) }
                     }
                     Text("Accessibility and overlay must be enabled separately in Android Settings. Allow only access you understand and want.", color = Color(0xFF8F8BAA), fontSize = 10.sp)
                 }
