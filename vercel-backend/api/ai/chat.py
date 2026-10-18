@@ -111,24 +111,29 @@ def respond(handler, status, payload):
     handler.wfile.write(body)
 
 
-def call_anthropic(messages, system_prompt):
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        return None
-    request_body = {
-        "model": os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-latest"),
-        "max_tokens": 900,
-        "system": system_prompt,
-        "messages": messages,
-    }
-    req = Request("https://api.anthropic.com/v1/messages",
-                  data=json.dumps(request_body).encode(),
-                  headers={"content-type": "application/json", "x-api-key": key,
-                           "anthropic-version": "2023-06-01"}, method="POST")
-    with urlopen(req, timeout=25) as response:
-        result = json.loads(response.read())
-    return "".join(block.get("text", "") for block in result.get("content", [])
-                   if block.get("type") == "text").strip()
+def synthesize_web_results(query, results):
+    # Real retrieved snippets only: no external LLM provider or fabricated citations.
+    sections = ["## " + query.strip(), "", "Here is a concise, source-linked summary of the web results:"]
+    for index, item in enumerate(results, 1):
+        title, snippet, source = item.get("title", "").strip(), item.get("snippet", "").strip(), item.get("url", "").strip()
+        if not title or not source:
+            continue
+        sections.extend(["", f"### {index}. {title}"])
+        if snippet:
+            sections.append(snippet)
+        sections.append(f"**Source:** {source}")
+    sections.extend(["", "---", "These are search-result summaries, not independently verified claims. Open the source links for full context."])
+    return "\n".join(sections)
+
+
+def wants_web_search(text):
+    value = text.strip().lower()
+    if "?" in value:
+        return True
+    return bool(re.search(
+        r"\b(search|look up|latest|current|today|news|research|sources|website|web|price|review|compare|who is|what is|what are|when did|where is|how does|tell me about|information about|find out|explain|weather|score|result|update)\b",
+        value
+    ))
 
 
 class handler(BaseHTTPRequestHandler):
@@ -157,10 +162,7 @@ class handler(BaseHTTPRequestHandler):
             if is_small_talk(latest):
                 return respond(self, 200, {"reply": local_conversation(latest), "mode": "conversation", "sources": []})
 
-            wants_web = bool(re.search(
-                r"\b(search|look up|latest|current|today|news|research|sources|website|web|price|review|compare|who is|what is|what are|when did|where is|how does|tell me about|information about|find out|explain)\b",
-                latest.lower()
-            )) or "?" in latest
+            wants_web = wants_web_search(latest)
             if wants_web:
                 try:
                     results = web_search(latest)
@@ -171,26 +173,12 @@ class handler(BaseHTTPRequestHandler):
                         "reply": "I couldn't retrieve web results right now. Please try again in a moment; I won't invent sources.",
                         "mode": "web_search", "sources": []
                     })
-                formatted = "## Web research\n\n"
-                for i, item in enumerate(results, 1):
-                    formatted += f"{i}. **{item['title']}**\n{item['snippet'] or 'Open the source for details.'}\nSource: {item['url']}\n\n"
-                # Synthesis is optional; the feature still works without Gemini or any paid AI API key.
-                try:
-                    synthesized = call_anthropic(safe_messages[-8:], SYSTEM_PROMPT + "\nUse only these retrieved web results and include their URLs:\n" + formatted)
-                except (URLError, TimeoutError, HTTPError, ValueError):
-                    synthesized = None
-                reply = synthesized or formatted.strip()
+                reply = synthesize_web_results(latest, results)
                 return respond(self, 200, {"reply": reply, "mode": "web_search", "sources": results})
 
-            # For open-ended conversation beyond the local greeting patterns, use Claude only if configured.
-            try:
-                answer = call_anthropic(safe_messages, SYSTEM_PROMPT)
-            except (URLError, TimeoutError, HTTPError, ValueError):
-                answer = None
-            if answer:
-                return respond(self, 200, {"reply": answer, "mode": "conversation", "sources": []})
+            # The emotion model is local guidance; casual chat never uses web search or a hosted LLM.
             return respond(self, 200, {
-                "reply": "I'm here with you 💜 I can chat about greetings and everyday feelings without web search. For a detailed answer, ask me to search or explain a specific topic.",
+                "reply": local_conversation(latest),
                 "mode": "conversation", "sources": []
             })
         except (ValueError, TypeError, json.JSONDecodeError):
