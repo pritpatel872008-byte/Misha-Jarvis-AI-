@@ -280,6 +280,26 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     Text("• Accessibility — read visible screen text on request and perform explicit Back/Home/notification or text-target actions.")
                     Text("• Device admin — lock the phone only when you explicitly request it.")
                     Text("Android requires separate approval screens for overlay, Accessibility and device admin. Misha cannot silently grant these.")
+                    TextButton(onClick = {
+                        showPermissionSetup = false
+                        try { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:" + context.packageName))) }
+                        catch (_: Exception) { status = "Open Android Settings → Display over other apps → Misha." }
+                    }) { Text("Open floating-overlay settings") }
+                    TextButton(onClick = {
+                        showPermissionSetup = false
+                        try { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                        catch (_: Exception) { status = "Open Android Settings → Accessibility to enable Misha Assistant Controls." }
+                    }) { Text("Open Accessibility settings") }
+                    TextButton(onClick = {
+                        showPermissionSetup = false
+                        val policy = context.getSystemService(android.content.Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                        val admin = ComponentName(context, MishaDeviceAdminReceiver::class.java)
+                        if (!policy.isAdminActive(admin)) {
+                            context.startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                                .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+                                .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Misha can lock the phone only when you explicitly request it."))
+                        } else status = "Device admin is already enabled."
+                    }) { Text("Open device-admin setup") }
                 }
             },
             confirmButton = {
