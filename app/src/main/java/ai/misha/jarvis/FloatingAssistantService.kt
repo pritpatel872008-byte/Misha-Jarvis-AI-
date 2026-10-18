@@ -2,15 +2,19 @@ package ai.misha.jarvis
 
 import android.Manifest
 import android.app.Notification
+import android.app.admin.DevicePolicyManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -62,6 +66,7 @@ class FloatingAssistantService : Service() {
     private var sendButton: Button? = null
     private var micButton: Button? = null
     private var busy = false
+    @Volatile private var flashlightEnabled = false
     private val conversationHistory = mutableListOf<Pair<String, String>>()
     private val executor = Executors.newSingleThreadExecutor()
 
@@ -361,6 +366,33 @@ class FloatingAssistantService : Service() {
                     "Searching for '$query'. I'll try the visible result and Follow/Subscribe control; app layouts vary, so check the account state afterward."
                 }
             } else when {
+                lower in listOf("flashlight on", "turn on flashlight", "switch on flashlight", "torch on", "turn on torch", "flashlight off", "turn off flashlight", "switch off flashlight", "torch off", "turn off torch") -> {
+                    val turnOn = lower.endsWith(" on") || lower.startsWith("turn on ") || lower.startsWith("switch on ")
+                    val cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
+                    val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                        cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                    }
+                    if (cameraId == null) "This phone does not expose an available camera flashlight."
+                    else {
+                        cameraManager.setTorchMode(cameraId, turnOn)
+                        flashlightEnabled = turnOn
+                        if (turnOn) "Flashlight is on." else "Flashlight is off."
+                    }
+                }
+                lower in listOf("lock phone", "lock my phone", "lock the phone", "lock screen", "lock my screen") -> {
+                    val policy = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                    val admin = ComponentName(this, MishaDeviceAdminReceiver::class.java)
+                    if (policy.isAdminActive(admin)) {
+                        policy.lockNow()
+                        "Locking the phone now."
+                    } else {
+                        startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                            .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+                            .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Allow Misha to lock the phone only when you explicitly request it.")
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        "Please approve Misha's device-admin permission, then repeat 'lock my phone'."
+                    }
+                }
                 lower in listOf("go back", "press back", "back") -> if (MishaAccessibilityService.perform("back")) "Went back." else "Enable Misha Assistant Controls in Accessibility settings first."
                 lower in listOf("go home", "home screen", "go to home screen") -> if (MishaAccessibilityService.perform("home")) "Returned to Home." else "Enable Misha Assistant Controls in Accessibility settings first."
                 lower in listOf("show notifications", "open notifications") -> if (MishaAccessibilityService.perform("notifications")) "Opened notifications." else "Enable Misha Assistant Controls in Accessibility settings first."
