@@ -244,6 +244,16 @@ def wants_web_search(text):
 
 
 class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # A real health check for deployment and monitoring; chat requests still require POST.
+        return respond(self, 200, {
+            "service": "Misha AI chat API",
+            "status": "online",
+            "chat_endpoint": "POST /api/ai/chat",
+            "model_provider_required": False,
+            "search": "DuckDuckGo public web search"
+        })
+
     def do_OPTIONS(self):
         respond(self, 204, {})
 
