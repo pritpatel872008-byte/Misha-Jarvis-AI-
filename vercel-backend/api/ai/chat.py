@@ -66,7 +66,7 @@ class ArticleTextParser(HTMLParser):
         if tag in {"script", "style", "noscript", "svg", "nav", "footer", "header", "form"} and self.skip_depth:
             self.skip_depth -= 1
         elif self.skip_depth == 0 and tag in self.BLOCK_TAGS:
-            self.parts.append("\\n")
+            self.parts.append("\n")
 
     def handle_data(self, data):
         if self.skip_depth == 0:
