@@ -294,21 +294,34 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode("current weather near me"))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); status = "Searching the web for current weather."; input = ""; return }
                 lower.startsWith("call ") || lower.startsWith("dial ") -> {
                     val target = prompt.substringAfter(' ').trim()
-                    val contactNumber = if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) findContactNumber(context, target) else null
-                    val number = contactNumber ?: target.takeIf { it.any(Char::isDigit) }
-                    if (number == null) {
-                        status = if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) "Allow Contacts permission in Android Settings, then say call followed by the saved contact name." else "No saved contact or phone number matched '$target'."
-                        input = ""; return
-                    }
-                    val tel = android.net.Uri.parse("tel:" + android.net.Uri.encode(number))
-                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
-                        context.startActivity(Intent(Intent.ACTION_CALL, tel))
-                        status = "Calling $target now."
+                    val digits = target.filter(Char::isDigit)
+                    if (digits.length >= 7 && target.replace(Regex("[+() .-]"), "").all { it.isDigit() }) {
+                        val uri = android.net.Uri.parse("tel:" + android.net.Uri.encode(target))
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                            context.startActivity(Intent(Intent.ACTION_CALL, uri)); status = "Calling the number you said."
+                        } else { context.startActivity(Intent(Intent.ACTION_DIAL, uri)); status = "Opened the dialer for the number you said." }
+                    } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+                        status = "Misha needs Contacts permission to search saved contacts. Accessibility permission is separate from Contacts permission."; input = ""; return
                     } else {
-                        context.startActivity(Intent(Intent.ACTION_DIAL, tel))
-                        status = "Phone permission is not granted, so I opened the dialer. Grant Phone permission in Android Settings to place calls by voice."
+                        val choice = Regex("^(.*?)(?:\\s+(\\d+))?$").matchEntire(target)!!
+                        val name = choice.groupValues[1].trim()
+                        val selectedIndex = choice.groupValues[2].toIntOrNull()
+                        val matches = findContactMatches(context, name)
+                        if (matches.isEmpty()) {
+                            status = "I couldn't find a saved contact matching '" + name + "'."; input = ""; return
+                        } else if (selectedIndex == null && matches.size > 1) {
+                            val list = matches.mapIndexed { i, item -> (i + 1).toString() + ". " + item.name + " — " + maskPhone(item.number) }.joinToString("\\n")
+                            status = "I found " + matches.size + " matching contacts:\\n" + list + "\\nSay call " + name + " 2 to select option 2."; input = ""; speak(status); return
+                        } else if (selectedIndex != null && selectedIndex !in 1..matches.size) {
+                            status = "Please choose a number from 1 to " + matches.size + "."; input = ""; speak(status); return
+                        } else {
+                            val chosen = if (selectedIndex != null) matches[selectedIndex - 1] else matches[0]
+                            val uri = android.net.Uri.parse("tel:" + android.net.Uri.encode(chosen.number))
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                                context.startActivity(Intent(Intent.ACTION_CALL, uri)); status = "Calling " + chosen.name + "."
+                            } else { context.startActivity(Intent(Intent.ACTION_DIAL, uri)); status = "Opened the dialer for " + chosen.name + "; Phone permission is required for direct calling." }
+                        }
                     }
-                    input = ""; return
                 }
                 lower == "lock my phone" || lower == "lock phone" -> { lockPhone(); status = "Device lock requested. Activate device admin if prompted."; input = ""; return }
                 lower in listOf("go back", "press back", "back") -> {
