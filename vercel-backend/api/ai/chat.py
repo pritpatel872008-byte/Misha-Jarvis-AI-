@@ -60,7 +60,7 @@ class ArticleTextParser(HTMLParser):
         if tag in {"script", "style", "noscript", "svg", "nav", "footer", "header", "form"}:
             self.skip_depth += 1
         elif self.skip_depth == 0 and tag in self.BLOCK_TAGS:
-            self.parts.append("\\n")
+            self.parts.append("\n")
 
     def handle_endtag(self, tag):
         if tag in {"script", "style", "noscript", "svg", "nav", "footer", "header", "form"} and self.skip_depth:
@@ -230,7 +230,7 @@ def synthesize_web_results(query, results):
         "---", "",
         "**How this answer was prepared:** I retrieved live search results, attempted to read the linked public pages, and selected relevant sentences from the retrieved text. This is an extractive summary, not a claim that every source has been independently verified."
     ])
-    return "\\n".join(sections)
+    return "\n".join(sections)
 
 
 def wants_web_search(text):
@@ -269,25 +269,20 @@ class handler(BaseHTTPRequestHandler):
             if is_small_talk(latest):
                 return respond(self, 200, {"reply": local_conversation(latest), "mode": "conversation", "sources": []})
 
-            wants_web = wants_web_search(latest)
-            if wants_web:
-                try:
-                    results = web_search(latest)
-                except (URLError, TimeoutError, HTTPError, ValueError):
-                    results = []
-                if not results:
-                    return respond(self, 200, {
-                        "reply": "I couldn't retrieve web results right now. Please try again in a moment; I won't invent sources.",
-                        "mode": "web_search", "sources": []
-                    })
-                reply = synthesize_web_results(latest, results)
-                return respond(self, 200, {"reply": reply, "mode": "web_search", "sources": results})
-
-            # The emotion model is local guidance; casual chat never uses web search or a hosted LLM.
-            return respond(self, 200, {
-                "reply": local_conversation(latest),
-                "mode": "conversation", "sources": []
-            })
+            # Only explicitly recognized small talk stays local. Every other user request,
+            # including broad questions such as "information about cybersecurity", is researched
+            # from live public web pages. No hosted LLM/provider is called.
+            try:
+                results = web_search(latest)
+            except (URLError, TimeoutError, HTTPError, ValueError, OSError):
+                results = []
+            if not results:
+                return respond(self, 200, {
+                    "reply": "I couldn't retrieve web results right now. Please try again in a moment; I won't invent sources.",
+                    "mode": "web_search", "sources": []
+                })
+            reply = synthesize_web_results(latest, results)
+            return respond(self, 200, {"reply": reply, "mode": "web_search", "sources": results})
         except (ValueError, TypeError, json.JSONDecodeError):
             return respond(self, 400, {"error": "Malformed JSON request."})
         except (URLError, TimeoutError) as error:
