@@ -652,46 +652,52 @@ class FloatingAssistantService : Service() {
     return text
 }
 
+private data class ContactMatch(val name: String, val number: String, val score: Int)
+
+private fun maskPhone(number: String): String {
+    val digits = number.filter(Char::isDigit)
+    return if (digits.length <= 4) number else "•••• " + digits.takeLast(4)
+}
+
 private fun contactNameScore(query: String, candidate: String): Int {
     if (query.isBlank() || candidate.isBlank()) return 100
     if (query == candidate) return 0
-    if (candidate.startsWith("$query ") || candidate.startsWith(query)) return 1
-    if (candidate.contains(query) || query.contains(candidate)) return 2
-    val qTokens = query.split(" ").filter { it.isNotBlank() }.toSet()
-    val cTokens = candidate.split(" ").filter { it.isNotBlank() }.toSet()
-    if (qTokens.isNotEmpty() && qTokens.all { token -> cTokens.any { it == token || it.startsWith(token) } }) return 2
+    val q = query.split(" ").filter { it.isNotBlank() }
+    val c = candidate.split(" ").filter { it.isNotBlank() }
+    if (q.isEmpty() || c.isEmpty()) return 100
+    if (candidate.startsWith(query)) return 1
+    if (q.all { token -> c.any { it == token || it.startsWith(token) } }) return 2
+    if (q.any { token -> c.any { it.startsWith(token) } }) return 3
     return 100
 }
 
-private fun findContactNumber(name: String): String? {
-        val wanted = normalizeContactQuery(name)
-        if (wanted.isBlank()) return null
-        return try {
-            val candidates = mutableListOf<Triple<String, String, Int>>()
-            contentResolver.query(
-                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
-                null, null,
-                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE NOCASE ASC"
-            )?.use { cursor ->
-                val nameColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-                val numberColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
-                while (cursor.moveToNext()) {
-                    val display = cursor.getString(nameColumn).orEmpty().trim()
-                    val number = cursor.getString(numberColumn).orEmpty().trim()
-                    if (display.isBlank() || number.isBlank()) continue
-                    val normalized = normalizeContactQuery(display)
-                    val score = contactNameScore(wanted, normalized)
-                    if (score < 100) candidates.add(Triple(display, number, score))
-                }
+private fun findContactMatches(name: String): List<ContactMatch> {
+    val wanted = normalizeContactQuery(name).replace(Regex("\\s+\\d+$"), "").trim()
+    if (wanted.isBlank()) return emptyList()
+    return try {
+        val rows = mutableListOf<ContactMatch>()
+        contentResolver.query(
+            android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
+            null, null, android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE NOCASE ASC"
+        )?.use { cursor ->
+            val nameCol = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+            val numberCol = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
+            while (cursor.moveToNext()) {
+                val display = cursor.getString(nameCol).orEmpty().trim()
+                val number = cursor.getString(numberCol).orEmpty().trim()
+                if (display.isBlank() || number.isBlank()) continue
+                val score = contactNameScore(wanted, normalizeContactQuery(display))
+                if (score < 100) rows.add(ContactMatch(display, number, score))
             }
-            if (candidates.isEmpty()) return null
-            val bestScore = candidates.minOf { it.third }
-            val best = candidates.filter { it.third == bestScore }.distinctBy { it.second.filter(Char::isDigit) }
-            // A close but ambiguous match must never select a different person's number.
-            if (best.size != 1 || bestScore > 2) null else best.single().second
-        } catch (_: Exception) { null }
-    }
+        }
+        val unique = rows.distinctBy { it.name.lowercase(Locale.ROOT) + "|" + it.number.filter(Char::isDigit) }
+        val best = unique.minOfOrNull { it.score } ?: return emptyList()
+        unique.filter { it.score == best }.sortedBy { it.name.lowercase(Locale.ROOT) }
+    } catch (_: Exception) { emptyList() }
+}
+
+private fun findContactNumber(name: String): String? = findContactMatches(name).singleOrNull()?.number
 
     private fun parseReply(body: String): String = try {
         val obj = JSONObject(body)
