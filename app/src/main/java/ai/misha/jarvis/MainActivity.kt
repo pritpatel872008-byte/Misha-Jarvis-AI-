@@ -556,79 +556,50 @@ private fun normalizeContactQuery(value: String): String {
     return text
 }
 
+private data class ContactMatch(val name: String, val number: String, val score: Int)
+
+private fun maskPhone(number: String): String {
+    val digits = number.filter(Char::isDigit)
+    return if (digits.length <= 4) number else "•••• " + digits.takeLast(4)
+}
+
 private fun contactNameScore(query: String, candidate: String): Int {
     if (query.isBlank() || candidate.isBlank()) return 100
     if (query == candidate) return 0
-    if (candidate.startsWith("$query ") || candidate.startsWith(query)) return 1
-    if (candidate.contains(query) || query.contains(candidate)) return 2
-    val qTokens = query.split(" ").filter { it.isNotBlank() }.toSet()
-    val cTokens = candidate.split(" ").filter { it.isNotBlank() }.toSet()
-    if (qTokens.isNotEmpty() && qTokens.all { token -> cTokens.any { it == token || it.startsWith(token) } }) return 2
+    val q = query.split(" ").filter { it.isNotBlank() }
+    val c = candidate.split(" ").filter { it.isNotBlank() }
+    if (q.isEmpty() || c.isEmpty()) return 100
+    if (candidate.startsWith(query)) return 1
+    if (q.all { token -> c.any { it == token || it.startsWith(token) } }) return 2
+    if (q.any { token -> c.any { it.startsWith(token) } }) return 3
     return 100
 }
 
-private fun findContactNumber(context: android.content.Context, name: String): String? {
-    val wanted = normalizeContactQuery(name)
-    if (wanted.isBlank()) return null
+private fun findContactMatches(context: android.content.Context, name: String): List<ContactMatch> {
+    val wanted = normalizeContactQuery(name).replace(Regex("\\s+\\d+$"), "").trim()
+    if (wanted.isBlank()) return emptyList()
     return try {
-        val candidates = mutableListOf<Triple<String, String, Int>>()
+        val rows = mutableListOf<ContactMatch>()
         context.contentResolver.query(
             android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
-            null, null,
-            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE NOCASE ASC"
+            null, null, android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE NOCASE ASC"
         )?.use { cursor ->
-            val nameColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-            val numberColumn = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
+            val nameCol = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+            val numberCol = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
             while (cursor.moveToNext()) {
-                val display = cursor.getString(nameColumn).orEmpty().trim()
-                val number = cursor.getString(numberColumn).orEmpty().trim()
+                val display = cursor.getString(nameCol).orEmpty().trim()
+                val number = cursor.getString(numberCol).orEmpty().trim()
                 if (display.isBlank() || number.isBlank()) continue
-                val normalized = normalizeContactQuery(display)
-                val score = contactNameScore(wanted, normalized)
-                if (score < 100) candidates.add(Triple(display, number, score))
+                val score = contactNameScore(wanted, normalizeContactQuery(display))
+                if (score < 100) rows.add(ContactMatch(display, number, score))
             }
         }
-        if (candidates.isEmpty()) return null
-        val bestScore = candidates.minOf { it.third }
-        val best = candidates.filter { it.third == bestScore }.distinctBy { it.second.filter(Char::isDigit) }
-        if (best.size != 1 || bestScore > 2) null else best.single().second
-    } catch (_: SecurityException) { null } catch (_: Exception) { null }
+        val unique = rows.distinctBy { it.name.lowercase(Locale.ROOT) + "|" + it.number.filter(Char::isDigit) }
+        val best = unique.minOfOrNull { it.score } ?: return emptyList()
+        unique.filter { it.score == best }.sortedBy { it.name.lowercase(Locale.ROOT) }
+    } catch (_: Exception) { emptyList() }
 }
 
-private fun startListening(recognizer: SpeechRecognizer?, context: android.content.Context, onResult: (String) -> Unit, onError: (String) -> Unit, languageTag: String = "en-US") {
-    if (recognizer == null) { onError("Speech recognition is unavailable on this device."); return }
-    recognizer.setRecognitionListener(object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {}
-        override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
-        override fun onError(error: Int) { onError("Voice recognition failed ($error). Try typing or speak again.") }
-        override fun onResults(results: Bundle?) {
-            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            if (text.isNullOrBlank()) onError("No speech was recognized. Please try again.") else onResult(text)
-        }
-        override fun onPartialResults(partialResults: Bundle?) {}
-        override fun onEvent(eventType: Int, params: Bundle?) {}
-    })
-    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
-        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-    }
-    try { recognizer.startListening(intent) } catch (_: Exception) { onError("Couldn't start voice recognition. Please retry.") }
-}
+private fun findContactNumber(context: android.content.Context, name: String): String? = findContactMatches(context, name).singleOrNull()?.number
 
-private fun saveHistory(context: android.content.Context, history: List<Message>) {
-    val array = org.json.JSONArray()
-    history.forEach { array.put(JSONObject().put("id", it.id).put("prompt", it.prompt).put("answer", it.answer)) }
-    context.getSharedPreferences("misha_history", 0).edit().putString("items", array.toString()).apply()
-}
-private fun loadHistory(context: android.content.Context): List<Message> = try {
-    val array = org.json.JSONArray(context.getSharedPreferences("misha_history", 0).getString("items", "[]"))
-    (0 until array.length()).map { i ->
-        val item = array.getJSONObject(i)
-        Message(item.optString("id", UUID.randomUUID().toString()), item.optString("prompt"), item.optString("answer"))
-    }.takeLast(100)
-} catch (_: Exception) { emptyList() }
