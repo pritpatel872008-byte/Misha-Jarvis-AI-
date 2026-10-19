@@ -5,6 +5,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -42,8 +43,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        tts = if (packageManager.getLaunchIntentForPackage("com.google.android.tts") != null) TextToSpeech(this, this, "com.google.android.tts") else TextToSpeech(this, this)
-        setContent { MishaApp(::speak, ::askBackend, ::lockPhone, ::openYouTube) }
+        tts = TextToSpeech(this, this)
+        setContent { MishaApp(::speak, ::askBackend, ::lockPhone, ::openYouTube, ::setVoiceLanguage, ::enableFloatingBubble) }
     }
     private fun lockPhone() {
         val policy = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
@@ -53,14 +54,44 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         } else startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin).putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Allow Misha to lock this phone only when you tap Lock my phone."))
     }
     private fun openYouTube() { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/"))) }
-    override fun onInit(status: Int) { if (status == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault() }
+    private fun enableFloatingBubble() {
+        if (!Settings.canDrawOverlays(this)) {
+            try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName"))) }
+            catch (_: Exception) { speak("Please enable Display over other apps for Misha in Android Settings.") }
+            return
+        }
+        try {
+            startService(Intent(this, MishaBubbleService::class.java))
+            speak("Floating Misha bubble enabled. Tap it to return to me.")
+        } catch (_: Exception) {
+            speak("I couldn't start the floating bubble. Check overlay permission and try again.")
+        }
+    }
+    private fun setVoiceLanguage(languageTag: String) {
+        val engine = tts ?: return
+        getSharedPreferences("misha_voice", MODE_PRIVATE).edit().putString("language", languageTag).apply()
+        val result = engine.setLanguage(Locale.forLanguageTag(languageTag))
+        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+            speak("That voice is not installed. Open Android Text-to-Speech settings and install a compatible voice.")
+            try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) {
+                try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Exception) {}
+            }
+        } else speak("Voice language updated.")
+    }
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            val languageTag = getSharedPreferences("misha_voice", MODE_PRIVATE).getString("language", "en-US") ?: "en-US"
+            val result = tts?.setLanguage(Locale.forLanguageTag(languageTag))
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) tts?.language = Locale.getDefault()
+        }
+    }
     private fun speak(text: String) { runOnUiThread { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) } }
     private fun askBackend(prompt: String, done: (String) -> Unit) {
         Executors.newSingleThreadExecutor().execute {
             var conn: HttpURLConnection? = null
             val answer = try {
                 conn = (URL("https://misha-voice-ai-api.vercel.app/api/ai/chat").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"; connectTimeout = 12000; readTimeout = 20000
+                    requestMethod = "POST"; connectTimeout = 12000; readTimeout = 30000
                     setRequestProperty("Content-Type", "application/json"); doOutput = true
                 }
                 conn.outputStream.use { it.write(JSONObject().put("messages", org.json.JSONArray().put(JSONObject().put("role", "user").put("content", prompt))).toString().toByteArray()) }
@@ -103,12 +134,13 @@ private val Violet = Color(0xFF9D7BFF)
 private data class Message(val id: String = UUID.randomUUID().toString(), val prompt: String, val answer: String)
 
 @Composable
-private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> Unit) -> Unit, lockPhone: () -> Unit, openYouTube: () -> Unit) {
+private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> Unit) -> Unit, lockPhone: () -> Unit, openYouTube: () -> Unit, setVoiceLanguage: (String) -> Unit, enableFloatingBubble: () -> Unit) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Ready when you are.") }
+    var runVoiceCommand by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf(loadHistory(context)) }
     val recognizer = remember {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) null else try {
@@ -118,23 +150,35 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
         } catch (_: Exception) { SpeechRecognizer.createSpeechRecognizer(context) }
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured." }, { listening = false; status = it })
+        if (granted) startListening(recognizer, context, { input = it; listening = false; status = "Voice captured."; runVoiceCommand = true }, { listening = false; status = it })
         else status = "Microphone permission is required for voice input."
     }
     DisposableEffect(recognizer) { onDispose { recognizer?.destroy() } }
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
     fun send(text: String) {
         val prompt = text.trim()
         if (prompt.isEmpty() || busy) return
         val lower = prompt.lowercase(Locale.ROOT)
         try {
             when {
-                lower == "open youtube" || lower.startsWith("open youtube") -> { openYouTube(); status = "Opening YouTube."; input = ""; return }
-                lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/"))); status = "Opening live weather."; input = ""; return }
+                lower == "open youtube" || lower.startsWith("open youtube") || lower == "youtube kholo" || lower == "youtube open karo" -> { openYouTube(); status = "Opening YouTube."; input = ""; return }
+                lower.contains("open instagram") || lower.contains("instagram kholo") || lower.contains("instagram open karo") || lower == "instagram" -> { launchInstalledApp(context, "com.instagram.android", "Instagram", { status = "Opening Instagram."; input = "" }, { status = it }); return }
+                lower.contains("open chrome") || lower.contains("chrome kholo") || lower.contains("chrome open karo") || lower == "chrome" -> { launchInstalledApp(context, "com.android.chrome", "Chrome", { status = "Opening Chrome."; input = "" }, { status = it }); return }
+                lower.contains("open settings") || lower.contains("settings kholo") || lower.contains("settings open karo") || lower == "phone settings" -> { try { context.startActivity(Intent(Settings.ACTION_SETTINGS)); status = "Opening Android Settings."; input = "" } catch (_: Exception) { status = "Android Settings could not be opened." }; return }
+                lower.contains("hindi mein bolo") || lower.contains("hindi voice") || lower.contains("speak hindi") -> { setVoiceLanguage("hi-IN"); status = "Switching to Hindi voice."; input = ""; return }
+                lower.contains("speak english") || lower.contains("english voice") || lower.contains("english mein bolo") -> { setVoiceLanguage("en-US"); status = "Switching to English voice."; input = ""; return }
+                lower.contains("speak japanese") || lower.contains("japanese voice") || lower.contains("nihongo") -> { setVoiceLanguage("ja-JP"); status = "Switching to Japanese voice."; input = ""; return }
+                lower.contains("voice settings") || lower.contains("tts settings") || lower.contains("change voice") -> { try { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }; status = "Choose your installed system voice engine and voice."; input = ""; return }
                 lower.startsWith("search ") || lower.startsWith("google ") -> {
                     val query = prompt.substringAfter(' ').trim()
                     context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode(query))))
                     status = "Opening Google search."; input = ""; return
                 }
+                lower.contains("weather") -> { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://weather.google.com/"))); status = "Opening live weather."; input = ""; return }
                 lower.startsWith("call ") || lower.startsWith("dial ") -> {
                     val number = prompt.substringAfter(' ').trim()
                     context.startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:" + android.net.Uri.encode(number))))
@@ -153,6 +197,12 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             history = (history + Message(prompt = prompt, answer = answer)).takeLast(100)
             saveHistory(context, history)
             busy = false; status = "Response received."; speak(answer)
+        }
+    }
+    LaunchedEffect(runVoiceCommand) {
+        if (runVoiceCommand) {
+            runVoiceCommand = false
+            send(input)
         }
     }
     MaterialTheme(colorScheme = darkColorScheme(primary = Violet, background = Night, surface = Color(0xFF15162B), onSurface = Color(0xFFF5F1FF))) {
@@ -174,7 +224,7 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                 Box(Modifier.size(174.dp).background(Brush.radialGradient(listOf(Color(0xFFD6C4FF), Violet, Color(0xFF34236E), Night)), CircleShape), contentAlignment = Alignment.Center) {
                     Button(onClick = {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            startListening(recognizer, context, { input = it; listening = false; status = "Voice captured." }, { listening = false; status = it }); listening = true; status = "Listening…"
+                            startListening(recognizer, context, { recognized -> listening = false; input = recognized; status = "Voice captured."; send(recognized) }, { listening = false; status = it }); listening = true; status = "Listening…"
                         } else permission.launch(Manifest.permission.RECORD_AUDIO)
                     }, shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D2B85)), modifier = Modifier.size(104.dp)) {
                         Text(if (listening) "•••" else "M", fontSize = 34.sp, fontWeight = FontWeight.Bold)
@@ -187,7 +237,11 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
                     OutlinedButton(onClick = { when { action.contains("Lock") -> { lockPhone(); status = "Activate device admin if prompted, then tap Lock my phone again." }; else -> send(action) } }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)) { Text(action, fontSize = 10.sp) }
                 }
             }
-            OutlinedButton(onClick = { openYouTube(); status = "Opening YouTube." }, modifier = Modifier.fillMaxWidth()) { Text("Open YouTube") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { openYouTube(); status = "Opening YouTube." }, modifier = Modifier.weight(1f)) { Text("Open YouTube") }
+                OutlinedButton(onClick = { enableFloatingBubble(); status = if (Settings.canDrawOverlays(context)) "Floating Misha bubble enabled." else "Allow overlay permission, then tap this again." }, modifier = Modifier.weight(1f)) { Text("Floating Misha") }
+            }
+            OutlinedButton(onClick = { try { context.startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }; status = "Select the installed system voice engine in Android settings." }, modifier = Modifier.fillMaxWidth()) { Text("Voice engine settings") }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Ask Misha anything…") }, shape = RoundedCornerShape(16.dp), trailingIcon = { TextButton(enabled = !busy, onClick = { send(input) }) { Text(if (busy) "…" else "Send") } }, maxLines = 3)
             Spacer(Modifier.height(12.dp))
@@ -206,6 +260,15 @@ private fun MishaApp(speak: (String) -> Unit, askBackend: (String, (String) -> U
             Text("Actions that affect your phone or accounts require permission and confirmation.", fontSize = 9.sp, color = Color(0xFF77758F), lineHeight = 13.sp)
         }
     }
+}
+
+private fun launchInstalledApp(context: android.content.Context, packageName: String, appName: String, onOpened: () -> Unit, onError: (String) -> Unit) {
+    try {
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+        if (launchIntent == null) { onError("$appName is not installed or is disabled."); return }
+        context.startActivity(launchIntent)
+        onOpened()
+    } catch (_: Exception) { onError("$appName could not be opened. Check that it is installed and enabled.") }
 }
 
 private fun startListening(recognizer: SpeechRecognizer?, context: android.content.Context, onResult: (String) -> Unit, onError: (String) -> Unit) {
