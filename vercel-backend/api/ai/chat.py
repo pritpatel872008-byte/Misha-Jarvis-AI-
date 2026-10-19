@@ -70,7 +70,7 @@ class ArticleTextParser(HTMLParser):
 
     def handle_data(self, data):
         if self.skip_depth == 0:
-            cleaned = re.sub(r"\\s+", " ", data).strip()
+            cleaned = re.sub(r"\s+", " ", data).strip()
             if cleaned:
                 self.parts.append(cleaned + " ")
 
@@ -88,7 +88,7 @@ def fetch_article_text(url):
             html = response.read(350_000).decode("utf-8", "replace")
         parser = ArticleTextParser()
         parser.feed(html)
-        text = re.sub(r"\\s+", " ", " ".join(parser.parts)).strip()
+        text = re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
         return text[:18000]
     except (URLError, TimeoutError, HTTPError, ValueError, OSError):
         return ""
@@ -109,8 +109,8 @@ def web_search(query):
         if not url.startswith(("https://", "http://")) or url in seen:
             continue
         seen.add(url)
-        title = re.sub(r"\\s+", " ", item.get("title", "")).strip()
-        snippet = re.sub(r"\\s+", " ", item.get("snippet", "")).strip()
+        title = re.sub(r"\s+", " ", item.get("title", "")).strip()
+        snippet = re.sub(r"\s+", " ", item.get("snippet", "")).strip()
         if not title:
             continue
         results.append({"title": title, "snippet": snippet, "url": url})
@@ -165,7 +165,7 @@ def respond(handler, status, payload):
 
 
 def split_sentences(text):
-    return [part.strip() for part in re.split(r"(?<=[.!?])\\s+(?=[A-Z0-9])|[\\n]+", text) if len(part.strip()) >= 45]
+    return [part.strip() for part in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])|[\n]+", text) if len(part.strip()) >= 45]
 
 
 def summarize_evidence(query, text, max_sentences=4):
