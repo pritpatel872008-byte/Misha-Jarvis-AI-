@@ -671,8 +671,8 @@ class FloatingAssistantService : Service() {
         .replace(Regex("[^\\p{L}\\p{N} ]+"), " ")
         .replace(Regex("\\s+"), " ").trim()
     // Remove spoken Hindi/Hinglish command particles around a contact name.
-    text = text.replace(Regex("^(?:ko|se|par|ka|ki|ke|keliye|ke liye)\\s+"), "")
-        .replace(Regex("\\s+(?:ko|se|par|keliye|ke liye|ko message)$"), "").trim()
+    text = text.replace(Regex("^(?:to|ko|se|par|ka|ki|ke|keliye|ke liye)\\s+"), "")
+        .replace(Regex("\\s+(?:to|ko|se|par|keliye|ke liye|ko message)$"), "").trim()
     return text
 }
 
@@ -689,9 +689,11 @@ private fun contactNameScore(query: String, candidate: String): Int {
     val q = query.split(" ").filter { it.isNotBlank() }
     val c = candidate.split(" ").filter { it.isNotBlank() }
     if (q.isEmpty() || c.isEmpty()) return 100
-    if (candidate.startsWith(query)) return 1
-    if (q.all { token -> c.any { it == token || it.startsWith(token) } }) return 2
-    if (q.any { token -> c.any { it.startsWith(token) } }) return 3
+
+    // Only allow a complete multi-word query to match. A single common word
+    // must never cause dozens of unrelated contacts to be returned.
+    if (c.size >= q.size && q.indices.all { i -> c[i] == q[i] }) return 1
+    if (q.size >= 2 && q.all { token -> c.any { it == token || it.startsWith(token) } }) return 2
     return 100
 }
 
