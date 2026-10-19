@@ -539,10 +539,34 @@ class FloatingAssistantService : Service() {
                 }
                 lower.startsWith("call ") || lower.startsWith("dial ") -> {
                     val target = clean.substringAfter(' ').trim()
-                    val number = if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) findContactNumber(target) else null
-                    val dialTarget = number ?: target.takeIf { it.any(Char::isDigit) }
-                    if (dialTarget == null) "I couldn't find that saved contact. Allow Contacts permission in Misha, then try the exact name."
-                    else { val uri = android.net.Uri.parse("tel:" + android.net.Uri.encode(dialTarget)); if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) { startActivity(Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Calling $target now." } else { startActivity(Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Phone permission is not granted, so I opened the dialer. Allow Phone permission in Android Settings to place calls by voice." } }
+                    val digits = target.filter(Char::isDigit)
+                    if (digits.length >= 7 && target.replace(Regex("[+() .-]"), "").all { it.isDigit() }) {
+                        val uri = android.net.Uri.parse("tel:" + android.net.Uri.encode(target))
+                        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                            startActivity(Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Calling the number you said."
+                        } else { startActivity(Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Opened the dialer for the number you said." }
+                    } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+                        "Misha needs Contacts permission to search saved contacts. Accessibility permission is separate from Contacts permission."
+                    } else {
+                        val choice = Regex("^(.*?)(?:\\s+(\\d+))?$").matchEntire(target)!!
+                        val name = choice.groupValues[1].trim()
+                        val selectedIndex = choice.groupValues[2].toIntOrNull()
+                        val matches = findContactMatches(name)
+                        if (matches.isEmpty()) {
+                            "I couldn't find a saved contact matching '" + name + "'."
+                        } else if (selectedIndex == null && matches.size > 1) {
+                            val list = matches.mapIndexed { i, item -> (i + 1).toString() + ". " + item.name + " — " + maskPhone(item.number) }.joinToString("\\n")
+                            "I found " + matches.size + " matching contacts:\\n" + list + "\\nSay call " + name + " 2 to select option 2."
+                        } else if (selectedIndex != null && selectedIndex !in 1..matches.size) {
+                            "Please choose a number from 1 to " + matches.size + "."
+                        } else {
+                            val chosen = if (selectedIndex != null) matches[selectedIndex - 1] else matches[0]
+                            val uri = android.net.Uri.parse("tel:" + android.net.Uri.encode(chosen.number))
+                            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                                startActivity(Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Calling " + chosen.name + "."
+                            } else { startActivity(Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "Opened the dialer for " + chosen.name + "; Phone permission is required for direct calling." }
+                        }
+                    }
                 }
                 else -> null
             }
