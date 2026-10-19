@@ -616,3 +616,58 @@ private fun findContactMatches(context: android.content.Context, name: String): 
 
 private fun findContactNumber(context: android.content.Context, name: String): String? = findContactMatches(context, name).singleOrNull()?.number
 
+private fun startListening(
+    recognizer: SpeechRecognizer?,
+    context: android.content.Context,
+    onResult: (String) -> Unit,
+    onError: (String) -> Unit,
+    language: String
+) {
+    if (recognizer == null) {
+        onError("Speech recognition is unavailable on this device.")
+        return
+    }
+    recognizer.setRecognitionListener(object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {}
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onError(error: Int) { onError("Voice recognition failed ($error). Try typing or speak again.") }
+        override fun onResults(results: Bundle?) {
+            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+            if (text.isNullOrBlank()) onError("No speech was recognized. Please try again.") else onResult(text)
+        }
+        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+    })
+    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+    }
+    try { recognizer.startListening(intent) } catch (_: Exception) { onError("Couldn't start voice recognition. Please retry.") }
+}
+
+private fun saveHistory(context: android.content.Context, history: List<Message>) {
+    val array = org.json.JSONArray()
+    history.forEach { item ->
+        array.put(JSONObject().put("id", item.id).put("prompt", item.prompt).put("answer", item.answer))
+    }
+    context.getSharedPreferences("misha_history", 0).edit().putString("items", array.toString()).apply()
+}
+
+private fun loadHistory(context: android.content.Context): List<Message> = try {
+    val raw = context.getSharedPreferences("misha_history", 0).getString("items", "[]") ?: "[]"
+    val array = org.json.JSONArray(raw)
+    (0 until array.length()).map { index ->
+        val item = array.getJSONObject(index)
+        Message(
+            id = item.optString("id").ifBlank { UUID.randomUUID().toString() },
+            prompt = item.optString("prompt"),
+            answer = item.optString("answer")
+        )
+    }.takeLast(100)
+} catch (_: Exception) {
+    emptyList<Message>()
+}
